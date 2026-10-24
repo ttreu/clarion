@@ -1,0 +1,45 @@
+[project]
+name = "klangrestaurator"
+version = "0.1.0"
+description = "Restaurierung von Lesungen mit Musik: KI-Entrauschung für Sprache, schonende Rauschminderung für Instrumente"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "noisereduce>=3.0",
+    "nara-wpe>=0.0.9",
+    "PySide6>=6.6",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.5"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+klangrestaurator-cli = "klangrestaurator.cli:main"
+
+[project.gui-scripts]
+klangrestaurator = "klangrestaurator.gui.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/klangrestaurator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: needs the deep-filter binary and network on first run"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E741"]
