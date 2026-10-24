@@ -185,7 +185,7 @@ def level_curve(bp: np.ndarray, eq_db: np.ndarray | None, strength: float, max_d
     tone EQ (``eq_db``) so both work together. Target: the median over the file. The gain is
     clipped to ±``max_db`` and scaled by ``strength``; pauses take the neighbouring values.
     ``voiced`` (bool per frame) limits the measurement to speech sections. Without it the faint AI
-    residue in music sections pulled the target down: 01.wav's speech was lowered by 7–10 dB.
+    residue in music sections pulled the target down: test file A's speech was lowered by 7–10 dB.
     """
     b = bp * (10 ** (eq_db / 10) if eq_db is not None else 1.0)
     lvl = 10 * np.log10((b * _LOUD_W).sum(axis=1) + 1e-20)

@@ -131,7 +131,7 @@ def music_chain(x: np.ndarray, noise: np.ndarray, reduction: float, hp_hz: float
     """Stationary spectral gating with a fine frequency resolution suited to instruments, then the
     optional hiss shelf. Variants from the listening tests (settings.MUSIC_VARIANTS): a higher
     threshold ``n_std``, a ``second_pass`` of NR, and a ``gate`` between notes.
-    Chosen by ear on 01.wav: 85 % + −6 dB above 8 kHz."""
+    Chosen by ear on test file A: 85 % + −6 dB above 8 kHz."""
     import noisereduce as nr
 
     xh = highpass(x, hp_hz)

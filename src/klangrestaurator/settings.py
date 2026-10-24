@@ -12,7 +12,7 @@ class Settings:
     speech_reduction_db: float = 40.0
     """How far noise/reverb may be pushed down in speech passages.
     The AI output is blended with this amount of the original (attenuation limit).
-    40 dB + WPE chosen by ear on 01.wav and 02.WAV over 20/25/30 dB (02: noise −27 → −34 dB below the
+    40 dB + WPE chosen by ear on two test readings with cello (A, B) over 20/25/30 dB (B: noise −27 → −34 dB below the
     voice); the price is a little more "breathing" of the noise floor with the syllables."""
     speech_dereverb: bool = True
     """Additional classic dereverberation (WPE) on speech. ~3.5× slower render, adds dryness."""
@@ -52,7 +52,7 @@ class Settings:
     # --- music chain --------------------------------------------------------
     music_reduction: float = 0.85
     """0..1 – proportion of stationary noise removed in music passages (0.85 ≈ -10 dB between notes
-    on 01.wav)."""
+    on test file A)."""
     music_highpass_hz: float = 30.0
     music_nstd: float = 1.5
     """NR threshold in noise standard deviations (higher catches noise slightly above the floor)."""
@@ -62,7 +62,7 @@ class Settings:
     """Lower the hiss between notes with a gentle expander (music sections only)."""
     music_hiss_db: float = -6.0
     """Shelf above 8 kHz for music (and the music share of speech + music); 0 = off. Chosen by ear on
-    01.wav together with 85 % reduction over stronger or two-pass NR (no 'underwater' sound)."""
+    test file A together with 85 % reduction over stronger or two-pass NR (no 'underwater' sound)."""
 
     # --- segmentation -------------------------------------------------------
     crossfade_s: float = 0.5
@@ -87,13 +87,13 @@ class Settings:
     music_ceiling_lu: float | None = 3.0
     """After loudness normalisation, music sections may be at most this many LU above the target
     (3 s short-term loudness); louder stretches are turned down smoothly. None = off. Without it a
-    speech-heavy file was raised so much that loud music hit the limiter hard (ZOOM0002.WAV: 28:44)."""
+    speech-heavy file was raised so much that loud music hit the limiter hard (a 70-minute test reading)."""
     limiter_db: float = -1.0
     """Limiter ceiling (dBFS) after loudness normalisation."""
     broadcast: bool = False
     """Four-band compressor modelled on Adobe Audition's Multiband Compressor, preset "Broadcast"
     (multiband.py). Runs before loudness normalisation; it brings speech closer to loud music
-    (Bachmann reading: speech 12 LU → 7 LU below the cello) and makes the whole denser. Chosen by ear:
+    (test reading: speech 12 LU → 7 LU below the cello) and makes the whole denser. Chosen by ear:
     the user's Audition pass on an export, matched within 0.4 dB."""
 
     # --- output ---------------------------------------------------------------

@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from scipy import ndimage
 
 from . import analysis, audio_io, chains, dfn, dynamics, multiband, tone
 from .analysis import MIX, MUSIC, SPEECH, Segment
@@ -317,10 +318,10 @@ class Project:
                     v = tone.apply_eq(v, curve, pa)
                 v = v[a - pa:b - pa]
                 # the music share gets a stronger NR: noise is stationary, music isn't, so this costs
-                # little music (02.WAV: noise −13 dB instead of −9 dB, cello −2.4 dB instead of −1.8 dB)
+                # little music (test file B: noise −13 dB instead of −9 dB, cello −2.4 dB instead of −1.8 dB)
                 ym = chains.music_chain(o, noise, settings.mix_reduction, settings.music_highpass_hz,
                                         settings.music_hiss_db)
-                # no WPE here: it treats sustained notes as reverb (02.WAV: −4 dB cello in the word gaps)
+                # no WPE here: it treats sustained notes as reverb (test file B: −4 dB cello in the word gaps)
                 ym = ym[a - pa:b - pa]
                 wm = analysis.kind_mask(segs, MIX, b - a, settings.mix_fade_s, start=a)[:, None]
                 out[a - A:b - A] += wm * (v + settings.mix_music * ym - y)
@@ -393,8 +394,7 @@ class Project:
         red = np.where(music, np.minimum(0.0, settings.loudness_target + settings.music_ceiling_lu - stl), 0.0)
         if red.min() > -0.1:
             return False
-        import scipy.ndimage as nd
-        red = nd.minimum_filter1d(red, 31)                         # start early, hold through the passage
+        red = ndimage.minimum_filter1d(red, 31)                         # start early, hold through the passage
         red = np.convolve(red, np.ones(21) / 21, "same")           # ~2 s soft ramps
         centres = (np.arange(len(red)) + 0.5) * hop * SR
         for s in range(0, len(y), BLOCK_S * SR):
@@ -432,7 +432,8 @@ class Project:
             p("Measuring loudness", 0.85)
             pre = dynamics.loudness(y)                # render() output is writable (array or memmap)
             p("Broadcast compression", 0.86)
-            multiband.compress_inplace(y, multiband.REF_LUFS - pre if np.isfinite(pre) else 0.0, cancel=cancel)
+            multiband.compress_inplace(y, multiband.REF_LUFS - pre if np.isfinite(pre) else 0.0,
+                                        check=lambda: self._check(cancel))
         if settings.loudness_target is None:   # peak normalisation only (as before)
             g, lim = self.output_gain(y, settings), None
         else:                                  # loudness normalisation (+ music ceiling) + limiter
@@ -468,7 +469,7 @@ class Project:
         post = None
         if settings.broadcast:
             gin, post = self._broadcast_estimate(settings, cancel)
-            multiband.compress_inplace(y, gin, cancel=cancel)
+            multiband.compress_inplace(y, gin, check=lambda: self._check(cancel))
         if settings.loudness_target is None and settings.broadcast:
             # the multiband stage ends in a limiter at its margin: scale that to the peak target
             g_o = self.preview_gain(settings)

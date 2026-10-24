@@ -37,7 +37,7 @@ def fake_enhance(x, out, start=0, stop=None, progress=None, cancel=None, workers
 @pytest.fixture
 def reading_file(tmp_path):
     x, music = synth_reading()
-    p = tmp_path / "lesung.wav"
+    p = tmp_path / "reading.wav"
     sf.write(p, x, 44_100, subtype="PCM_16")
     return p, music
 

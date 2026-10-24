@@ -53,13 +53,13 @@ def test_loudness_checkbox_disables_controls(app, monkeypatch):
     from klangrestaurator.gui.app import MainWindow
     w = MainWindow()
     try:
-        was = w.chk_norm.isChecked()
-        w.chk_norm.setChecked(False)
-        assert not w.cmb_loud.isEnabled()
+        was = w.panel.chk_norm.isChecked()
+        w.panel.chk_norm.setChecked(False)
+        assert not w.panel.cmb_loud.isEnabled()
         assert w.settings().effective().loudness_target is None
-        w.chk_norm.setChecked(True)
-        assert w.cmb_loud.isEnabled() and w.settings().normalize
-        w.chk_norm.setChecked(was)                     # leave the user's preference as it was
+        w.panel.chk_norm.setChecked(True)
+        assert w.panel.cmb_loud.isEnabled() and w.settings().normalize
+        w.panel.chk_norm.setChecked(was)                     # leave the user's preference as it was
     finally:
         w.close()
 
@@ -77,7 +77,7 @@ def test_previews_are_remembered_and_reused(app, monkeypatch, tmp_path, reading_
                         lambda self, st, a, b, cancel=None, slot=0: (calls.append(st.normalize),
                                                                     orig(self, st, a, b, cancel, slot))[1])
     w = MainWindow()
-    was = w.chk_norm.isChecked()
+    was = w.panel.chk_norm.isChecked()
 
     def pump(cond, limit=30):
         t = time.time()
@@ -86,21 +86,21 @@ def test_previews_are_remembered_and_reused(app, monkeypatch, tmp_path, reading_
             time.sleep(0.01)
 
     try:
-        w.chk_norm.setChecked(True)
+        w.panel.chk_norm.setChecked(True)
         path, _ = reading_file
         w.load(path)
         pump(lambda: w.project is not None and w.project.analysed and w._job is None)
         w.timeline.sel = (2.0, 8.0)
         w.make_preview()
-        pump(lambda: w._job is None and w.files_ab is not None)
+        pump(lambda: w._job is None and w.listen.files_ab is not None)
         for on in (False, True, False):
-            w.chk_norm.setChecked(on)
+            w.panel.chk_norm.setChecked(on)
             pump(lambda: not w._preview_stale and w._job is None)
         assert calls == [True, False]           # only the first visit of each state was computed
         assert len(w._previews) == 2
         assert w._auto_timer.interval() == 400     # sliders keep their debounce
     finally:
-        w.chk_norm.setChecked(was)
+        w.panel.chk_norm.setChecked(was)
         w.close()
 
 
@@ -121,10 +121,10 @@ def test_original_plays_before_preview_and_trim_keys(app, monkeypatch, reading_f
         path, _ = reading_file
         w.load(path)
         # right after loading – analysis still running – the original can already be played
-        assert w.files_ab == (path, None) and w._orig_only
-        assert w.btn_play.isEnabled() and not w.rb_b.isEnabled() and w.rb_a.isChecked()
+        assert w.listen.files_ab == (path, None) and w.listen.orig_only
+        assert w.listen.btn_play.isEnabled() and not w.listen.rb_b.isEnabled() and w.listen.rb_a.isChecked()
         pump(lambda: w.project.analysed and w._job is None)
-        assert w.btn_play.isEnabled() and w._preview_range == (0.0, w.project.duration)
+        assert w.listen.btn_play.isEnabled() and w.listen.range == (0.0, w.project.duration)
         w._mark_stale()                                # no automatic whole-file preview in original mode
         assert not w._auto_timer.isActive()
         w.timeline.head = 4.0
@@ -137,8 +137,8 @@ def test_original_plays_before_preview_and_trim_keys(app, monkeypatch, reading_f
         assert w.project.trim is None
         w.timeline.sel = (2.0, 8.0)
         w.make_preview()
-        pump(lambda: w._job is None and w.files_ab is not None and w.files_ab[1] is not None)
-        assert not w._orig_only and w.rb_b.isEnabled() and w.rb_b.isChecked()
+        pump(lambda: w._job is None and w.listen.files_ab is not None and w.listen.files_ab[1] is not None)
+        assert not w.listen.orig_only and w.listen.rb_b.isEnabled() and w.listen.rb_b.isChecked()
     finally:
         w.close()
 
@@ -239,8 +239,8 @@ def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_f
         w._on_relabel(2.0, 6.0, MIX)
         w._on_trim(1.0, 25.0)
         w._on_tone_ref(20.0, 24.0)
-        w.cmb_v_music.activated.emit(4)                 # music variant E
-        w.sl_tone.setValue(40)
+        w.panel.cmb_v_music.activated.emit(4)                 # music variant E
+        w.panel.sl_tone.setValue(40)
         assert w._dirty and w.windowTitle().endswith("•")
         proj = tmp_path / "test.klang"
         monkeypatch.setattr(w, "_project_path", proj)   # avoid the save dialog
@@ -257,7 +257,7 @@ def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_f
         assert [(s.start, s.end, s.kind) for s in w2.project.segments] == expected[0]
         assert w2.project.trim == (1.0, 25.0) and w2.project.tone_ref == (20.0, 24.0)
         assert w2.settings() == expected[1]
-        assert w2.cmb_v_music.currentText().startswith("E")
+        assert w2.panel.cmb_v_music.currentText().startswith("E")
         assert not w2._dirty and "test.klang" in w2.windowTitle()
     finally:
         w2.close()

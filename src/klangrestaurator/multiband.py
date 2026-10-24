@@ -12,6 +12,7 @@ limiter delays by its look-ahead, so call ``flush`` at the end.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -102,8 +103,6 @@ class _BandComp:
     gr[i] = max(t[i], r·gr[i−1])  ⇔  gr[i] = r^i · cummax_j(t[j] · r^−j), in chunks so r^−j stays finite."""
 
     CHUNK = 10_000                     # ms
-    DETECT = "peak"                    # level detector per 1 ms frame: "peak" or "rms"
-    KNEE_DB = 0.0                      # soft-knee width (0 = hard knee)
 
     def __init__(self, band: Band):
         self.b = band
@@ -118,19 +117,11 @@ class _BandComp:
         n = len(x)
         nf = -(-n // HOP)
         pad = np.zeros((nf * HOP - n, x.shape[1]))
-        fr = np.concatenate([x, pad]).reshape(nf, HOP, -1)
-        if self.DETECT == "rms":
-            lvl = 10 * np.log10((fr ** 2).mean(axis=(1, 2)) * 2 + 1e-18)      # sine: rms·√2 = peak
-        else:
-            lvl = 20 * np.log10(np.maximum(np.abs(fr).max(axis=(1, 2)), 1e-9))
-        over = lvl - self.b.thresh_db
-        k = self.KNEE_DB
-        if k > 0:
-            over = np.where(over <= -k / 2, 0.0, np.where(over >= k / 2, over, (over + k / 2) ** 2 / (2 * k)))
-        else:
-            over = np.maximum(over, 0.0)
+        # peak detector + hard knee: matched Audition better than RMS or a soft knee (0.44 vs 0.53 dB)
+        pk = np.abs(np.concatenate([x, pad])).reshape(nf, HOP, -1).max(axis=(1, 2))
+        over = np.maximum(20 * np.log10(np.maximum(pk, 1e-9)) - self.b.thresh_db, 0.0)
         target = over * (1.0 - 1.0 / self.b.ratio)
-        target, zf = lfilter([1 - self.a], [1, -self.a], target, zi=[self.att * self.a])
+        target, _ = lfilter([1 - self.a], [1, -self.a], target, zi=[self.att * self.a])
         self.att = float(target[-1])
         gr = np.empty(nf)
         for s in range(0, nf, self.CHUNK):
@@ -168,15 +159,15 @@ class MultibandCompressor:
 
 
 def compress_inplace(y: np.ndarray, input_gain_db: float = 0.0, preset: Preset = BROADCAST,
-                     block_s: int = 60, cancel=None) -> None:
+                     block_s: int = 60, check: Callable[[], None] | None = None) -> None:
     """Compress ``y`` (array or memmap) in place, block by block. The output lags the input by the
-    limiter's look-ahead, so each output lands before the next block is read."""
+    limiter's look-ahead, so each output lands before the next block is read. ``check`` is called
+    between blocks (the pipeline passes its cancel check, which raises ``Cancelled``)."""
     mbc = MultibandCompressor(preset, input_gain_db)
     pos = 0
     for s in range(0, len(y), block_s * SR):
-        if cancel is not None and cancel():
-            from .pipeline import Cancelled
-            raise Cancelled()
+        if check is not None:
+            check()
         out = mbc.process(np.asarray(y[s:s + block_s * SR]))
         y[pos:pos + len(out)] = out
         pos += len(out)

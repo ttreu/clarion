@@ -123,6 +123,8 @@ class Timeline(QWidget):
         return float(np.clip(a + x / max(1, self.width()) * (b - a), 0, self.duration))
 
     # ---------------------------------------------------------------- painting
+    LANE = 18                                 # height of the section band at the top
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -132,9 +134,19 @@ class Timeline(QWidget):
             p.setPen(self.palette().placeholderText().color())
             p.drawText(self.rect(), Qt.AlignCenter, "Drop an audio file or a project here, or choose “Open…”")
             return
+        self._paint_sections(p, h)
+        x_in, x_out = self._paint_waveform(p, w, h)
+        s0, s1 = self.sel
+        if s1 > s0:
+            p.fillRect(QRectF(self._x(s0), self.LANE, self._x(s1) - self._x(s0), h - self.LANE), COL_SEL)
+        self._paint_markers(p, w, h, x_in, x_out)
+        self._paint_labels(p, w, h)
+
+    def _paint_sections(self, p: QPainter, h: int) -> None:
+        """Coloured section bands with labels, hatching for manual corrections, and boundary grips."""
         a, b = self.view
-        lane = 18
-        for s in self.segments:  # segment bands
+        lane = self.LANE
+        for s in self.segments:
             if s.end < a or s.start > b:
                 continue
             x0, x1 = self._x(s.start), self._x(s.end)
@@ -149,7 +161,6 @@ class Timeline(QWidget):
                 p.setPen(Qt.white)
                 p.drawText(QRectF(x0 + 4, 0, x1 - x0 - 8, lane - 2), Qt.AlignVCenter | Qt.AlignLeft,
                            KIND_LABEL.get(s.kind, s.kind))
-
         for i in range(len(self.segments) - 1):  # grips on the boundaries (draggable)
             t = self.segments[i].end
             if a <= t <= b:
@@ -158,39 +169,35 @@ class Timeline(QWidget):
                 p.fillRect(QRectF(x - (2 if active else 1), 0, 4 if active else 2, lane - 2),
                            QColor(255, 255, 255, 255 if active else 200))
 
-        # waveform: peak (light) and RMS (solid), coloured by section, grey outside In/Out
+    def _paint_waveform(self, p: QPainter, w: int, h: int) -> tuple[float, float]:
+        """Waveform (cached layer) with the area outside In/Out washed out; returns the In/Out x."""
         t_in, t_out = self.trim or (0.0, self.duration)
         x_in, x_out = self._x(t_in), self._x(t_out)
         wash = QColor(self.palette().base().color())
         wash.setAlpha(180)
-        outside = [r for r in (QRectF(0, 0, max(0.0, x_in), h), QRectF(x_out, 0, max(0.0, w - x_out), h))
-                   if r.width() > 0]
-        for r in outside:
-            p.fillRect(r, wash)
-        mid = lane + (h - lane) / 2
-        half = (h - lane) / 2 - 4
+        for r in (QRectF(0, 0, max(0.0, x_in), h), QRectF(x_out, 0, max(0.0, w - x_out), h)):
+            if r.width() > 0:
+                p.fillRect(r, wash)
+        mid = self.LANE + (h - self.LANE) / 2
+        half = (h - self.LANE) / 2 - 4
         p.setPen(QPen(_c(C.line), 1))
         p.drawLine(QPointF(0, mid), QPointF(w, mid))
         p.drawPixmap(0, 0, self._wave_layer(w, h, mid, half, x_in, x_out))
+        return x_in, x_out
 
-        s0, s1 = self.sel
-        if s1 > s0:
-            p.fillRect(QRectF(self._x(s0), lane, self._x(s1) - self._x(s0), h - lane), COL_SEL)
-
-        # In / Out markers (always there; drag them to cut start and end)
+    def _paint_markers(self, p: QPainter, w: int, h: int, x_in: float, x_out: float) -> None:
+        """In / Out markers (always there; drag them to cut start and end), tone reference, playhead."""
         for which, x, label in (("in", x_in, "In"), ("out", x_out, "Out")):
             if -6 <= x <= w + 6:
                 xx = min(max(x, 1.0), w - 1.0)
-                active = self._trim_drag == which
-                p.setPen(QPen(COL_TRIM, 3 if active else 2))
-                p.drawLine(QPointF(xx, lane), QPointF(xx, h))
+                p.setPen(QPen(COL_TRIM, 3 if self._trim_drag == which else 2))
+                p.drawLine(QPointF(xx, self.LANE), QPointF(xx, h))
                 fw = 28
-                fx = xx if which == "in" else xx - fw
-                flag = QRectF(fx, h - 24, fw, 16)
+                flag = QRectF(xx if which == "in" else xx - fw, h - 24, fw, 16)
                 p.fillRect(flag, COL_TRIM)
                 p.setPen(Qt.white)
                 p.drawText(flag, Qt.AlignCenter, label)
-        if self.ref:  # tone reference
+        if self.ref:
             r0, r1 = self._x(self.ref[0]), self._x(self.ref[1])
             p.fillRect(QRectF(r0, h - 24, max(2.0, r1 - r0), 4), COL_REF)
             if r1 - r0 > 90:
@@ -199,11 +206,15 @@ class Timeline(QWidget):
         p.setPen(QPen(COL_HEAD, 2))
         xh = self._x(self.head)
         p.drawLine(QPointF(xh, 0), QPointF(xh, h))
+
+    def _paint_labels(self, p: QPainter, w: int, h: int) -> None:
+        """Start and end time of the view, and the time under the mouse."""
+        a, b = self.view
         p.setPen(self.palette().text().color())
         p.drawText(QRectF(34, h - 18, 200, 16), Qt.AlignLeft, fmt(a))
         p.drawText(QRectF(w - 234, h - 18, 200, 16), Qt.AlignRight, fmt(b))
         if self._hover is not None:
-            p.drawText(QRectF(self._x(self._hover) + 4, lane + 2, 120, 16), Qt.AlignLeft, fmt(self._hover))
+            p.drawText(QRectF(self._x(self._hover) + 4, self.LANE + 2, 120, 16), Qt.AlignLeft, fmt(self._hover))
 
     def _wave_regions(self, x_in: float, x_out: float, w: float):
         """(x0, x1, colour) strips: each section's colour inside In/Out, grey outside."""
@@ -321,8 +332,6 @@ class Timeline(QWidget):
             if d <= dist:
                 best, dist = i, d
         return best
-
-    LANE = 18
 
     def _trim_at(self, x: float, y: float, tol: float = 6.0) -> str | None:
         """"in" / "out" if (x, y) is on a marker; only below the section band (boundaries win there)."""

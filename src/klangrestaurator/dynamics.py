@@ -129,7 +129,7 @@ class Limiter:
     """Look-ahead peak limiter on a 1 ms grid; keeps its state across consecutive blocks.
 
     Release 400 ms: the first version let go after 80 ms, which distorted loud low-pitched music
-    audibly (ZOOM0002.WAV, cello at 28:44 – heard as "clipping").
+    audibly (a 70-minute test reading: loud cello heard as "clipping").
 
     Feed blocks in order with ``process``; it delays the audio by the look-ahead, so call ``flush``
     at the end to get the remaining samples.

@@ -1,8 +1,18 @@
 [project]
 name = "klangrestaurator"
 version = "0.1.0"
-description = "Restaurierung von Lesungen mit Musik: KI-Entrauschung für Sprache, schonende Rauschminderung für Instrumente"
+description = "clarion: restore recordings where speech and music take turns (AI denoising for speech, gentle noise reduction for music)"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "Thomas Treu" }]
+keywords = ["audio", "restoration", "noise reduction", "speech enhancement", "deepfilternet", "podcast"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: MacOS",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Intended Audience :: End Users/Desktop",
+]
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",

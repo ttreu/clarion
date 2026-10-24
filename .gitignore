@@ -16,3 +16,14 @@ dist/
 *.flac
 *.mp3
 *.npy
+# private material: test recordings, listening samples, projects, archives
+Testfile/
+Hörproben/
+*.klang
+*.pkf
+*.tgz
+*.aif
+*.aiff
+*.m4a
+.venv 2/
+.coverage

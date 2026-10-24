@@ -35,9 +35,9 @@ render(range, Settings):
                   link: one STFT gain per bin from both AI channels, applied to orig L+R
                   (deep-filter runs L/R independently → voice drifts L/R at high reduction)
    music  chain = HP(orig) + (noisereduce(orig, local noise profile) − HP(orig)), then hiss shelf −6 dB above
-                  8 kHz (music_hiss_db; 85 % + shelf chosen by ear on 01.wav over 95 %, two-pass NR, gating)
+                  8 kHz (music_hiss_db; 85 % + shelf chosen by ear on test file A over 95 %, two-pass NR, gating)
    mix (speech + music) = HP(link(enh)) + mix_music·M'   M' = noisereduce(orig, prop 0.95) (no WPE: it
-                  eats sustained notes, −4 dB cello on 02.WAV); like the speech chain with a large, denoised share of the original, so the music
+                  eats sustained notes, −4 dB cello on test file B); like the speech chain with a large, denoised share of the original, so the music
                   stays continuous (no pumping). Noise, room sound and music share one knob (mix_music).
                   Earlier tries: recovering music from the AI residual (damaged the music) and music chain +
                   voice lift (too noisy and reverberant).
@@ -55,7 +55,7 @@ export: [Settings.broadcast: multiband.py, model of Adobe Audition's Multiband C
    afterwards, or the cap would be undone) → look-ahead limiter at −1 dBFS, release 400 ms
    (dynamics.Limiter, stateful across blocks) → 24-bit WAV via audio_io.StreamWriter (seamless resampling with
    context). Settings.normalize off (GUI group checkbox "Loudness", CLI --no-normalize) → old peak normalisation.
-   Tried and dropped (no audible benefit in a blind listening comparison on 02.WAV, see git history): a voice
+   Tried and dropped (no audible benefit in a blind listening comparison on test file B, see git history): a voice
    compressor, and a home-made mastering stage (EQ + 3-band compression; without a make-up gate it lifted pause noise by
    12–16 dB).
 preview: the GUI remembers the last 8 previews (key: source, Settings.effective(), range, sections,
@@ -92,7 +92,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   right-click), clipped ±12 dB × `tone_match`; plus `level_curve` (weighted loudness of sounding voice frames,
   6 s windows, pulled to the file median, ±10 dB × `level_match`) added as a flat gain. Voice activity is
   judged locally (`voice_active`: within 15 dB of the 90th pct over ±10 s), not by a global threshold.
-  Only frames inside SPEECH/MIX sections count (the faint AI residue in music lowered 01.wav's speech by 7–10 dB).
+  Only frames inside SPEECH/MIX sections count (the faint AI residue in music lowered test file A's speech by 7–10 dB).
   Applied as one STFT EQ to the speech chain and the MIX voice part; music is untouched
 - `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
@@ -100,11 +100,17 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   Settings, GUI choices; opening one re-runs/uses the cached analysis, then applies the user's decisions
 - `gui/style.py` – dark studio theme (colours in `C`, stylesheet, palette) + vector transport icons; `gui/meter.py`
   – stereo level meter fed from the file being played (`_feed_meter`, last 40 ms before the play position)
-- `cli.py` – CLI; `gui/app.py` main window (settings grouped: Speech / Music / Speech + Music | Loudness
-  (checkable group: LUFS target) | Output); `gui/timeline.py` waveform + segment view (peak/RMS per 5 ms from `wave.npy` =
+- `cli.py` – CLI: `build_parser()`, `settings_from_args()` (preset + overrides), `main()`
+- `gui/app.py` – `MainWindow`: header, timeline, the two panels, menus/shortcuts; opening audio and `.klang`
+  projects, analysis jobs, previews (+ the memory of the last 8), export
+- `gui/settings_panel.py` – `SettingsPanel`: Settings ↔ widgets (preset, Speech / Music / Speech + Music with
+  variant drop-downs, Loudness with the live spectrum, Output); signals `changed` / `switched`
+- `gui/listen_panel.py` – `ListenPanel`: preview button, A/B, transport + loop, level meter, and the
+  `QMediaPlayer` (glitch-free loading, `play_original()` before the first preview, `show_preview()`)
+- `gui/timeline.py` waveform + segment view (peak/RMS per 5 ms from `wave.npy` =
   `analysis.waveform_overview`, real samples when zoomed in, square-root scale, coloured by section, drawn into a
   cached pixmap; click/drag/right-click/zoom; dragging a section boundary
-  ±5 px → `analysis.move_boundary`, both neighbours become manual);
+  ±5 px → `analysis.move_boundary`, both neighbours become manual); `gui/spectrum.py` live spectrum;
   `gui/worker.py` QThread jobs with progress + cancel
 - `tests/` – synthetic "reading" (bursty noise speech + harmonic cello) with a fake AI; one slow test with the real binary
 
@@ -133,7 +139,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   then skips `.pth` files while Qt skips plugins. So the venv lives in `.venv.nosync/` (iCloud ignores `*.nosync`)
   with `.venv` as a symlink to it. If it was recreated as a plain dir: `rm -rf .venv && mkdir .venv.nosync &&
   ln -s .venv.nosync .venv && uv sync`.
-- Origin: this replicates a manual restoration of two Zoom recordings (Ingeborg-Bachmann reading with cello)
+- Origin: this replicates a manual restoration of two Zoom recordings (a reading with cello)
   that was judged good; "Natural" (formerly "Natürlich") is the preset that was chosen. Its speech setting was later raised
   from 20 dB to 40 dB + WPE by listening tests (old behaviour ≈ "Gentle").
 

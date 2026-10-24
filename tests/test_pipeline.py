@@ -150,8 +150,9 @@ def test_trim_limits_export_with_soft_edges(reading_file, no_dfn, tmp_path):
 
 
 def test_loud_music_is_capped_above_the_loudness_target(tmp_path, no_dfn):
-    """Mostly quiet speech + a short, much louder music part (like ZOOM0002.WAV): after normalisation
-    the music must stay at most 3 LU above the target, the speech keeps its level."""
+    """Mostly quiet speech + a short, much louder music part (like a long reading with a loud cello
+    passage): after normalisation the music must stay at most 3 LU above the target, the speech keeps
+    its level."""
     from conftest import synth_reading
 
     from klangrestaurator import dynamics

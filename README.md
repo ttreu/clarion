@@ -1,55 +1,141 @@
-# Klangrestaurator
+# clarion
 
-Mac-App zur Restaurierung von Mitschnitten, in denen sich **Sprache und Musik abwechseln** –
-z. B. Lesungen mit Cello, Vorträge mit musikalischen Zwischenspielen, Gottesdienste.
+**Restore recordings where speech and music take turns** – readings with live music, lectures with
+interludes, services, talks with a band. clarion cleans the voice with a speech AI and treats the music
+gently, so the instruments are not destroyed the way a normal noise remover would destroy them.
 
-- **Sprache** wird mit einer Sprach-KI (DeepFilterNet3) entrauscht, Raumhall wird dabei mit reduziert.
-  Optional gibt es eine zusätzliche klassische Hallreduktion (WPE).
-- **Musik** wird nicht durch die Sprach-KI geschickt, weil die das Instrument zerstören würde.
-  Stattdessen gibt es eine schonende spektrale Rauschminderung mit einem Rauschprofil aus den
-  leisen Stellen in der Nähe. Der Raumklang bleibt erhalten.
-- **Automatische Erkennung**, wo gesprochen und wo musiziert wird. In der Zeitleiste kannst du sie per Rechtsklick korrigieren.
-- **A/B-Vorschau** an jeder Stelle, **Export als 24-bit WAV** (48 kHz oder Original-Samplerate).
+![clarion main window](docs/screenshot.png)
 
-## Starten
+## Why
 
-Voraussetzung ist macOS (Apple Silicon oder Intel). Das Python-Tool `uv` wird bei Bedarf automatisch installiert.
+Speech-enhancement AIs are excellent at removing noise and room sound from a voice, but they treat
+everything that is not speech as noise: a cello, a piano or applause gets wiped out or turns into
+watery artefacts. Classic noise reduction keeps the music, but cannot clean a voice as well.
+clarion detects which parts of a recording are speech, music, or speech over music, and processes each
+part with the method that suits it – in one pass, with smooth transitions.
 
-1. Doppelklick auf **`Klangrestaurator.command`**
-   (beim ersten Mal: Rechtsklick → Öffnen, weil die Datei nicht signiert ist).
-   Der erste Start richtet alles ein und dauert 1–2 Minuten.
-2. Datei ins Fenster ziehen. Beim ersten Öffnen einer Datei wird die KI einmal über die ganze Aufnahme
-   gerechnet (etwa ¼ der Spieldauer). Das Ergebnis wird zwischengespeichert, danach geht alles schnell.
-3. Musikpassagen (orange) und Sprache (blau) prüfen und Fehler per Rechtsklick korrigieren.
-4. „Vorschau berechnen“, mit Leertaste abspielen und mit Tab zwischen A/B umschalten.
-5. „Exportieren…“
+## Features
 
-Beim allerersten Lauf wird das DeepFilterNet-Programm (~35 MB) von GitHub geladen und unter
-`~/Library/Application Support/Klangrestaurator/` gespeichert.
+- **Speech:** AI noise reduction ([DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)), optional
+  extra dereverberation (WPE), tone and level matching when the speaker moves relative to the microphone.
+- **Music:** gentle spectral noise reduction with a noise profile from nearby quiet passages, optional
+  treble-hiss reduction. The room sound stays.
+- **Speech + music:** the AI voice plus a denoised share of the original, so music under a voice stays
+  continuous.
+- **Automatic detection** of speech / music / speech + music. Fix it in the timeline: drag a boundary,
+  or right-click to relabel.
+- **Loudness** to a LUFS target (EBU R128 / ITU-R BS.1770) with a look-ahead limiter, an optional
+  ceiling for loud music, and an optional four-band "broadcast" compressor. Live spectrum and level meter.
+- **A/B preview** at any position, recomputed automatically when you change a setting, with instant
+  switching between recent previews.
+- **Trim** start and end with In/Out markers, **projects** (`.klang`) that keep all markers and settings,
+  **export** as 24-bit WAV (48 kHz or the original sample rate).
+- Works on long files: one-hour recordings stay within a few GB of RAM.
 
-## Voreinstellungen
+## Install and run
 
-| Preset     | Sprache        | Hallreduktion | Musik |
-|------------|----------------|---------------|-------|
-| Natürlich  | −20 dB         | –             | 70 %  |
-| Kräftig    | −30 dB         | WPE           | 85 %  |
-| Sanft      | −12 dB         | –             | 50 %  |
+clarion runs on macOS (Apple Silicon or Intel). Linux should work from source; Windows is untested.
 
-## Kommandozeile
+**From source (recommended for now):**
+
+1. Download the repository ("Code → Download ZIP") and unpack it, or `git clone` it.
+2. Double-click **`clarion.command`**. The first time, macOS asks for confirmation because the file is
+   not signed: right-click → *Open*. The first start installs [uv](https://docs.astral.sh/uv/) and the
+   Python packages, which takes 1–2 minutes.
+
+Or in a terminal:
 
 ```bash
-uv run klangrestaurator-cli ZOOM0001.WAV                    # Natürlich, 48 kHz
-uv run klangrestaurator-cli *.WAV --preset Kräftig --keep-rate
-uv run klangrestaurator-cli ZOOM0001.WAV --segments         # nur Musikpassagen auflisten
+uv sync
+uv run klangrestaurator
 ```
 
-## Als richtige .app bauen
+On first use clarion downloads the `deep-filter` program (about 35 MB) from the
+[DeepFilterNet releases](https://github.com/Rikorose/DeepFilterNet/releases) and stores it in
+`~/Library/Application Support/Klangrestaurator/` (macOS). Analyses are cached in
+`~/Library/Caches/Klangrestaurator/` (about twice the size of the recording); you can delete that folder
+at any time.
+
+## How to use
+
+1. Drop an audio file (WAV, AIFF, FLAC, MP3; M4A and others need [ffmpeg](https://ffmpeg.org)) on the window. The first analysis runs the AI over
+   the whole recording, which takes about a quarter of its duration; it is cached afterwards.
+2. Check the sections – **speech** (blue), **music** (amber), **speech + music** (violet) – and correct
+   them by dragging a boundary or with a right-click.
+3. Pick a preset or variants, click **Compute preview**, press **Space** to play and **Tab** to switch
+   between A (original) and B (restored).
+4. **Export…**
+
+| Preset  | Speech                 | Music                | Speech + music   |
+|---------|------------------------|----------------------|------------------|
+| Natural | 40 dB + dereverb       | 85 % + treble −6 dB  | music share 50 % |
+| Strong  | 40 dB + dereverb       | 95 %, higher threshold | music share 25 % |
+| Gentle  | 20 dB                  | 70 %                 | music share 75 % |
+
+### Command line
 
 ```bash
-./scripts/build_app.sh        # → dist/Klangrestaurator.app
+uv run klangrestaurator-cli recording.wav                       # preset Natural, −16 LUFS, 48 kHz
+uv run klangrestaurator-cli *.wav --preset Strong --keep-rate
+uv run klangrestaurator-cli recording.wav --broadcast --lufs -14
+uv run klangrestaurator-cli recording.wav --segments            # only list the detected sections
+uv run klangrestaurator-cli --help
 ```
 
-## Zwischenspeicher
+## How it works
 
-Analysen liegen unter `~/Library/Caches/Klangrestaurator/` (ca. 2× die Größe der Aufnahme als 48-kHz-Float).
-Du kannst den Ordner jederzeit löschen.
+DeepFilterNet removes only 2–6 dB from speech but 30–50 dB from instruments, applause or crowd noise. That
+difference is the speech/music detector – no extra classifier is needed. Each section then goes through
+its own chain (speech: AI + optional WPE; music: spectral noise gating; speech + music: a mix of both),
+and the chains are cross-faded at the boundaries. Loudness is measured according to ITU-R BS.1770.
+Details are in [CLAUDE.md](CLAUDE.md), the developer notes.
+
+## Building a macOS app
+
+```bash
+./scripts/build_app.sh        # → dist/clarion.app (unsigned)
+```
+
+If you distribute the built app, include [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): the app bundles Qt/PySide6 and other libraries under
+the LGPL (see the notices for what that requires).
+
+## Development
+
+```bash
+uv run pytest -q -m "not slow"   # tests (a fake AI; the slow test runs the real binary)
+uvx ruff check src tests         # lint
+```
+
+## Credits
+
+clarion stands on the work of others. Thank you!
+
+- **DeepFilterNet** by Hendrik Schröter, Tobias Rosenkranz, Alberto N. Escalante-B. and Andreas Maier –
+  the speech AI. If you use clarion in research, please cite their paper:
+  H. Schröter, T. Rosenkranz, A. N. Escalante-B., A. Maier: *DeepFilterNet: Perceptually Motivated
+  Real-Time Speech Enhancement*, INTERSPEECH 2023.
+- **noisereduce** by Tim Sainburg – spectral noise gating for music. T. Sainburg, M. Thielk,
+  T. Q. Gentner: *Finding, visualizing, and quantifying latent structure across diverse animal vocal
+  repertoires*, PLoS Computational Biology 16(10), 2020.
+- **nara_wpe** by Lukas Drude, Jahn Heymann, Christoph Boeddeker and Reinhold Haeb-Umbach –
+  dereverberation (WPE). L. Drude et al.: *NARA-WPE: A Python package for weighted prediction error
+  dereverberation in Numpy and Tensorflow for online and offline processing*, ITG Fachtagung
+  Sprachkommunikation 2018.
+- **Qt / PySide6**, **NumPy**, **SciPy**, **python-soundfile / libsndfile** – the foundation.
+- Loudness measurement follows **ITU-R BS.1770** and **EBU R128**.
+- The optional "broadcast" compressor uses the parameter values of the "Broadcast" preset of Adobe
+  Audition's Multiband Compressor, as shown in that application; the implementation is clarion's own.
+
+The full list of components and their licenses is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+clarion was developed by Thomas Treu with the help of [Claude Code](https://claude.com/claude-code)
+(Anthropic).
+
+Adobe and Audition are trademarks of Adobe Inc. clarion is an independent project and is not affiliated
+with or endorsed by Adobe or by the authors of the libraries above.
+
+## License
+
+[MIT](LICENSE) © 2026 Thomas Treu. Third-party components keep their own licenses, see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
