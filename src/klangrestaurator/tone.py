@@ -1,4 +1,4 @@
-"""Tone matching for the voice ("Klang angleichen").
+"""Tone and level matching for the voice ("Klang angleichen", "Lautstärke angleichen").
 
 When a speaker moves (close to the PA microphone → the recorder hears mostly the loudspeaker: boomy
 and harsh; normal position → direct voice), the voice's long-term spectrum changes a lot. This module
@@ -104,6 +104,21 @@ def _fill_nan(x: np.ndarray) -> np.ndarray:
     return np.stack([np.interp(idx, idx[ok], x[ok, b]) for b in range(x.shape[1])], 1)
 
 
+def voice_active(lvl_db: np.ndarray, radius_s: float = 10.0, below_db: float = 15.0) -> np.ndarray:
+    """Frames where the voice is clearly sounding, judged against its *local* loudness.
+
+    A global threshold would drop most frames of a quiet section (speaker far from the microphone),
+    exactly where tone and level matching are needed. Here a frame counts if it is within ``below_db``
+    of the 90th percentile of the level within ±``radius_s``.
+    """
+    n = len(lvl_db)
+    fps = SR / HOP
+    r, step = int(radius_s * fps), max(1, int(0.5 * fps))
+    pts = np.arange(0, n, step)
+    ref = np.array([np.percentile(lvl_db[max(0, i - r):i + r + 1], 90) for i in pts])
+    return lvl_db > np.interp(np.arange(n), pts, ref) - below_db
+
+
 def correction_curve(bp: np.ndarray, dryness: np.ndarray, strength: float, max_db: float,
                      ref: tuple[float, float] | None = None, win_s: float = 6.0) -> np.ndarray:
     """EQ gain in dB per frame and band that pulls the voice towards the reference timbre.
@@ -115,7 +130,7 @@ def correction_curve(bp: np.ndarray, dryness: np.ndarray, strength: float, max_d
     lvl = 10 * np.log10(tot + 1e-20)
     if not np.isfinite(lvl).any():
         return np.zeros_like(bp)
-    active = lvl > np.percentile(lvl, 50)                       # loud voice frames only
+    active = voice_active(lvl)
     fps = SR / HOP
     win, min_act = int(win_s * fps), int(1.5 * fps)
     shape = _windowed_shape(bp, active, win, min_act)
@@ -150,6 +165,41 @@ def correction_curve(bp: np.ndarray, dryness: np.ndarray, strength: float, max_d
     k3 = np.array([0.25, 0.5, 0.25])
     corr = np.stack([np.convolve(np.pad(r, 1, mode="edge"), k3, "valid") for r in corr])
     return corr.astype(np.float32)
+
+
+# rough loudness weighting per band (K-weighting-like: less bass, a little more presence)
+_LOUD_W = 10 ** (np.interp(CENTRES, [80, 100, 125, 160, 200, 250, 1000, 1250, 1600, 2000, 2500, 16000],
+                           [-12, -8, -5, -3, -1.5, 0, 0, 1, 2.5, 3.5, 4, 4]) / 10).astype(np.float32)
+
+
+def level_curve(bp: np.ndarray, eq_db: np.ndarray | None, strength: float, max_db: float,
+                win_s: float = 6.0) -> np.ndarray:
+    """Gain in dB per frame that evens out the voice's loudness (speaker closer / further away).
+
+    Loudness = weighted band power of loud voice frames within a sliding window, measured after the
+    tone EQ (``eq_db``) so both work together. Target: the median over the file. The gain is
+    clipped to ±``max_db`` and scaled by ``strength``; pauses take the neighbouring values.
+    """
+    b = bp * (10 ** (eq_db / 10) if eq_db is not None else 1.0)
+    lvl = 10 * np.log10((b * _LOUD_W).sum(axis=1) + 1e-20)
+    if not np.isfinite(lvl).any() or len(lvl) == 0:
+        return np.zeros(len(bp), np.float32)
+    active = voice_active(lvl)
+    fps = SR / HOP
+    win, min_act = int(win_s * fps), int(1.5 * fps)
+    p = np.where(active, 10 ** (lvl / 10), 0.0)
+    c = np.cumsum(np.concatenate([[0.0], p]))
+    k = np.cumsum(np.concatenate([[0.0], active.astype(float)]))
+    i = np.arange(len(lvl))
+    lo, hi = np.clip(i - win // 2, 0, len(lvl)), np.clip(i + win // 2 + 1, 0, len(lvl))
+    cnt = k[hi] - k[lo]
+    loud = 10 * np.log10((c[hi] - c[lo]) / np.maximum(cnt, 1) + 1e-20)
+    loud[cnt < min_act] = np.nan
+    if np.isnan(loud).all():
+        return np.zeros(len(bp), np.float32)
+    target = np.nanmedian(loud)
+    loud = _fill_nan(loud[:, None])[:, 0]
+    return (np.clip(target - loud, -max_db, max_db) * strength).astype(np.float32)
 
 
 def apply_eq(x: np.ndarray, curve_db: np.ndarray, start: int) -> np.ndarray:

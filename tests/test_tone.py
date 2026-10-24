@@ -71,3 +71,16 @@ def test_apply_eq_mono_keeps_shape():
     n_fr = len(x) // tone.HOP + 1
     y = tone.apply_eq(x, np.full((n_fr, len(tone.CENTRES)), 3.0, np.float32), 0)
     assert y.shape == x.shape
+
+
+def test_level_curve_evens_out_quiet_and_loud_parts():
+    v = np.concatenate([_voice(15, 6) * 0.25, _voice(15, 7)]).astype(np.float32)   # 12 dB quieter first
+    bp = tone.band_powers(v)
+    g = tone.level_curve(bp, None, strength=1.0, max_db=10.0)
+    y = tone.apply_eq(v, np.repeat(g[:, None], len(tone.CENTRES), 1), 0)
+    q, l_ = slice(3 * SR, 12 * SR), slice(18 * SR, 27 * SR)
+    before = 20 * np.log10(np.std(v[l_]) / np.std(v[q]))
+    after = 20 * np.log10(np.std(y[l_]) / np.std(y[q]))
+    assert before > 11 and abs(after) < 3
+    assert np.all(np.abs(g) <= 10.0 + 1e-6)
+    assert np.allclose(tone.level_curve(bp, None, 0.0, 10.0), 0)

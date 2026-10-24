@@ -113,6 +113,10 @@ class MainWindow(QMainWindow):
                                 "(z. B. nah am Mikrofon der Beschallung: dröhnend und scharf). Ziel sind die "
                                 "trockensten Stellen der Datei oder eine per Rechtsklick gewählte Klangreferenz.")
         f.addRow("Sprache: Klang angleichen", self._pair(self.sl_tone, self.lbl_tone))
+        self.sl_level, self.lbl_level = self._slider(0, 100, "%")
+        self.sl_level.setToolTip("Gleicht die Lautstärke der Stimme über die Datei an (gemessen über je 6 s), "
+                                 "z. B. nah am Mikrofon vs. normale Sitzposition. Die Musik bleibt unverändert.")
+        f.addRow("Sprache: Lautstärke angleichen", self._pair(self.sl_level, self.lbl_level))
         self.sl_music, self.lbl_music = self._slider(0, 100, "%")
         f.addRow("Musik: Rauschreduktion", self._pair(self.sl_music, self.lbl_music))
         self.sl_mix, self.lbl_mix = self._slider(0, 100, "%")
@@ -263,6 +267,7 @@ class MainWindow(QMainWindow):
         return base.with_(speech_reduction_db=float(self.sl_speech.value()),
                           speech_dereverb=self.chk_wpe.isChecked(),
                           tone_match=self.sl_tone.value() / 100,
+                          level_match=self.sl_level.value() / 100,
                           music_reduction=self.sl_music.value() / 100,
                           mix_music=self.sl_mix.value() / 100)
 
@@ -275,6 +280,7 @@ class MainWindow(QMainWindow):
         self.sl_mix.setValue(int(round(st.mix_music * 100)))
         self.chk_wpe.setChecked(st.speech_dereverb)
         self.sl_tone.setValue(int(round(st.tone_match * 100)))
+        self.sl_level.setValue(int(round(st.level_match * 100)))
         self.prefs.setValue("preset", name)
         self._mark_stale()
 

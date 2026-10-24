@@ -67,7 +67,10 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   (noisereduce, n_fft 4096)
 - `tone.py` – tone matching for the voice: third-octave bands of the linked AI voice (cached as
   `voice_bands.npy`), 6 s sliding shape vs. a reference (driest 30 % of windows, or `tone_ref.json` set by
-  right-click), clipped ±12 dB × `tone_match`; applied as STFT EQ to the speech chain and the MIX voice part
+  right-click), clipped ±12 dB × `tone_match`; plus `level_curve` (weighted loudness of sounding voice frames,
+  6 s windows, pulled to the file median, ±10 dB × `level_match`) added as a flat gain. Voice activity is
+  judged locally (`voice_active`: within 15 dB of the 90th pct over ±10 s), not by a global threshold.
+  Applied as one STFT EQ to the speech chain and the MIX voice part; music is untouched
 - `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
 - `cli.py` – CLI; `gui/app.py` main window; `gui/timeline.py` level + segment view (click/drag/right-click/zoom);
@@ -96,7 +99,6 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 ## Ideas / roadmap
 
 - Third class "applause/crowd" (currently treated as music = gentle NR) with its own handling
-- Speech leveling between sections (close vs. normal speaking position)
 - Loudness normalisation (EBU R128) and gentle speech leveling as export option
 - Batch window (several files, one preset), drag-out of finished files
 - Code signing/notarisation for the .app; bundle the deep-filter binary instead of downloading

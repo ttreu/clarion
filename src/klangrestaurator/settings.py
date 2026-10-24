@@ -41,6 +41,11 @@ class Settings:
     Evens out changes of microphone position, e.g. close to the PA (boomy, harsh) vs. normal."""
     tone_max_db: float = 12.0
     """Largest EQ correction per band before ``tone_match`` is applied."""
+    level_match: float = 0.7
+    """0..1: how far the voice's loudness (6 s windows) is pulled to the file's median, e.g. speaker
+    close to vs. away from the microphone. Music is not touched."""
+    level_max_db: float = 10.0
+    """Largest level correction before ``level_match`` is applied."""
 
     # --- music chain --------------------------------------------------------
     music_reduction: float = 0.70

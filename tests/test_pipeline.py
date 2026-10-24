@@ -68,7 +68,7 @@ def test_mix_segment_is_voice_plus_share_of_music(reading_file, no_dfn):
     proj = Project(path)
     proj.prepare()
     lvl = lambda x: 10 * np.log10((x ** 2).mean())  # noqa: E731
-    st = PRESETS["Natürlich"]
+    st = PRESETS["Natürlich"].with_(tone_match=0.0, level_match=0.0)   # check the mix formula alone
     y_music = proj.render(st, 12, 18)          # 10–20 s is detected as music
     proj.set_kind(10, 20, SPEECH)              # as plain speech the AI wipes the music
     y_speech = proj.render(st, 12, 18)

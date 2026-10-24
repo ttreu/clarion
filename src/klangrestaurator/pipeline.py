@@ -157,16 +157,22 @@ class Project:
         self._curve_key = None
 
     def tone_curve(self, settings: Settings) -> np.ndarray | None:
-        """EQ curve (dB, frames × bands) for the voice, or None when tone matching is off."""
-        if settings.tone_match <= 0 or self.voice_bands is None:
+        """Voice EQ (dB, frames × bands): tone matching plus level matching, or None when both are off."""
+        if (settings.tone_match <= 0 and settings.level_match <= 0) or self.voice_bands is None:
             return None
-        key = (settings.tone_match, settings.tone_max_db, self.tone_ref)
+        key = (settings.tone_match, settings.tone_max_db, self.tone_ref, settings.level_match,
+               settings.level_max_db)
         if key != self._curve_key:
-            fr = np.arange(len(self.voice_bands)) * tone.HOP / SR        # frame times (s)
-            dry = np.interp(fr * 4, np.arange(len(self.levels)) + 0.5, self.enh_levels - self.levels)
-            self._curve = tone.correction_curve(self.voice_bands, dry, settings.tone_match,
-                                                settings.tone_max_db, ref=self.tone_ref)
-            self._curve_key = key
+            bp = self.voice_bands
+            curve = np.zeros_like(bp)
+            if settings.tone_match > 0:
+                fr = np.arange(len(bp)) * tone.HOP / SR        # frame times (s)
+                dry = np.interp(fr * 4, np.arange(len(self.levels)) + 0.5, self.enh_levels - self.levels)
+                curve = tone.correction_curve(bp, dry, settings.tone_match, settings.tone_max_db,
+                                              ref=self.tone_ref)
+            if settings.level_match > 0:
+                curve = curve + tone.level_curve(bp, curve, settings.level_match, settings.level_max_db)[:, None]
+            self._curve, self._curve_key = curve, key
         return self._curve
 
     def save_segments(self) -> None:
