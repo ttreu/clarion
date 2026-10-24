@@ -90,6 +90,11 @@ class Settings:
     speech-heavy file was raised so much that loud music hit the limiter hard (ZOOM0002.WAV: 28:44)."""
     limiter_db: float = -1.0
     """Limiter ceiling (dBFS) after loudness normalisation."""
+    broadcast: bool = False
+    """Four-band compressor modelled on Adobe Audition's Multiband Compressor, preset "Broadcast"
+    (multiband.py). Runs before loudness normalisation; it brings speech closer to loud music
+    (Bachmann reading: speech 12 LU → 7 LU below the cello) and makes the whole denser. Chosen by ear:
+    the user's Audition pass on an export, matched within 0.4 dB."""
 
     # --- output ---------------------------------------------------------------
     peak_dbfs: float = -1.0

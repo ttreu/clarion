@@ -46,19 +46,24 @@ render(range, Settings):
          music→speech 0.5 s centred; speech→music 40 ms ending at the onset, which render() snaps
          to 5 ms precision (snap_music_onsets, auto boundaries only) so the music chain's higher
          noise floor arrives with the music instead of swelling in the silence before it
-export: loudness normalise to loudness_target LUFS (BS.1770, blockwise) → music ceiling (music_ceiling_lu: 3 s
+export: [Settings.broadcast: multiband.py, model of Adobe Audition's Multiband Compressor preset "Broadcast"
+   (LR4 crossovers 137/1147/6910 Hz, peak detector on a 1 ms grid, hard knee, +9.9 dB make-up into a limiter at
+   −0.1 dBFS); fed at multiband.REF_LUFS = −17.2 (the export the user ran through Audition) because its
+   thresholds are absolute; matched Audition's output within 0.4 dB per 50 ms frame; chosen by ear]
+   → loudness normalise to loudness_target LUFS (BS.1770, blockwise) → music ceiling (music_ceiling_lu: 3 s
    short-term loudness of MUSIC sections capped at target + 3 LU, smooth ~2 s ramps; gain is NOT re-measured
    afterwards, or the cap would be undone) → look-ahead limiter at −1 dBFS, release 400 ms
    (dynamics.Limiter, stateful across blocks) → 24-bit WAV via audio_io.StreamWriter (seamless resampling with
    context). Settings.normalize off (GUI group checkbox "Loudness", CLI --no-normalize) → old peak normalisation.
    Tried and dropped (no audible benefit in a blind listening comparison on 02.WAV, see git history): a voice
-   compressor, and a mastering stage (EQ + 3-band compression; without a make-up gate it lifted pause noise by
+   compressor, and a home-made mastering stage (EQ + 3-band compression; without a make-up gate it lifted pause noise by
    12–16 dB).
 preview: the GUI remembers the last 8 previews (key: source, Settings.effective(), range, sections,
    tone ref), each with its own files, so switching back to a computed state is instant.
    Same gain as the export, from Project.estimated_loudness (8 probes × 2 s, cached per
    settings; a single preview range misjudges by up to 6 dB because speech loses more than music)
    In peak mode the preview gain is the original's peak gain × (orig peak / processed peak) on the probes.
+   With broadcast on, the preview runs the multiband stage on the probes too (Project._broadcast_estimate).
 ```
 
 Key insight: DeepFilterNet removes 2–6 dB on speech but 30–50 dB on instruments/applause/crowd noise, so the
@@ -80,6 +85,8 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 - `chains.py` – high-pass, `stereo_link`, speech chain, WPE (nara_wpe, 10 s chunks), music chain
   (noisereduce, n_fft 4096)
 - `dynamics.py` – BS.1770 loudness (streaming meter), true peak, look-ahead limiter
+- `multiband.py` – four-band compressor ("Broadcast"), streaming (`MultibandCompressor`, `compress_inplace`);
+  the release is vectorised (gr[i] = r^i · cummax(t[j]·r^−j) in 10 s chunks), ~1 s per minute of audio
 - `tone.py` – tone matching for the voice: third-octave bands of the linked AI voice (cached as
   `voice_bands.npy`), 6 s sliding shape vs. a reference (driest 30 % of windows, or `tone_ref.json` set by
   right-click), clipped ±12 dB × `tone_match`; plus `level_curve` (weighted loudness of sounding voice frames,

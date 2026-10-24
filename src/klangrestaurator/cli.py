@@ -33,9 +33,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--level", type=float, help="match the voice's level 0..1 (default 0.7, 0 = off)")
     ap.add_argument("--no-normalize", action="store_true",
                     help="no loudness normalisation: peak-normalise to -1 dBFS instead of LUFS + limiter")
+    ap.add_argument("--broadcast", action="store_true",
+                    help="multiband compression like Adobe Audition's 'Broadcast' preset "
+                         "(before the loudness target)")
     ap.add_argument("--lufs", help="target loudness in LUFS (default -16) or 'peak' for peak normalisation to -1 dBFS")
     ap.add_argument("--dereverb", action=argparse.BooleanOptionalAction, help="extra dereverberation (WPE)")
-    ap.add_argument("--keep-rate", action="store_true", help="Original-Samplerate statt 48 kHz ausgeben")
+    ap.add_argument("--keep-rate", action="store_true", help="write the original sample rate instead of 48 kHz")
     ap.add_argument("--segments", action="store_true",
                     help="only analyse and list music / speech+music sections")
     a = ap.parse_args(argv)
@@ -55,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
         st = st.with_(level_match=a.level)
     if a.no_normalize:
         st = st.with_(normalize=False)
+    if a.broadcast:
+        st = st.with_(broadcast=True)
     if a.lufs is not None:
         st = st.with_(loudness_target=None if a.lufs.lower() == "peak" else float(a.lufs))
     if a.dereverb is not None:

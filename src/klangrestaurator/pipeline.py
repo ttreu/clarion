@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import analysis, audio_io, chains, dfn, dynamics, tone
+from . import analysis, audio_io, chains, dfn, dynamics, multiband, tone
 from .analysis import MIX, MUSIC, SPEECH, Segment
 from .settings import SR, Settings
 
@@ -403,6 +403,16 @@ class Project:
             y[s:e] = np.asarray(y[s:e]) * (10 ** (gdb / 20)).astype(np.float32)[:, None]
         return True
 
+    def _broadcast_estimate(self, settings: Settings, cancel: Cancel = None) -> tuple[float, float]:
+        """(input gain dB for the multiband stage, estimated loudness after it) for previews:
+        the stage is run on the probes, scaled like the full render would be."""
+        pre = self.estimated_loudness(settings, cancel)
+        gin = multiband.REF_LUFS - pre if np.isfinite(pre) else 0.0
+        pr, _ = self._probes(settings, cancel)
+        x = pr * np.float32(10 ** (gin / 20))
+        post = multiband.REF_LUFS + dynamics.loudness(multiband.compress(x)) - dynamics.loudness(x)
+        return gin, post
+
     @staticmethod
     def _db_gain(target: float, measured: float, fallback: float = 1.0) -> float:
         return 10 ** ((target - measured) / 20) if np.isfinite(measured) else fallback
@@ -418,10 +428,15 @@ class Project:
         if start_s > 0 or (end_s is not None and end_s < self.duration):
             _fade_edges(y, int(FADE_S * SR))           # no click where the recording was cut
         dest = Path(dest)
+        if settings.broadcast:                 # multiband compressor at its reference level, then on as usual
+            p("Measuring loudness", 0.85)
+            pre = dynamics.loudness(y)                # render() output is writable (array or memmap)
+            p("Broadcast compression", 0.86)
+            multiband.compress_inplace(y, multiband.REF_LUFS - pre if np.isfinite(pre) else 0.0, cancel=cancel)
         if settings.loudness_target is None:   # peak normalisation only (as before)
             g, lim = self.output_gain(y, settings), None
         else:                                  # loudness normalisation (+ music ceiling) + limiter
-            p("Measuring loudness", 0.86)
+            p("Measuring loudness", 0.88)
             g = self._db_gain(settings.loudness_target, dynamics.loudness(y), self.output_gain(y, settings))
             if settings.music_ceiling_lu is not None:
                 # turn down music that would end up too loud; the gain stays as measured before, so
@@ -450,7 +465,16 @@ class Project:
         tag = f"_{slot}" if slot else ""
         f_o, f_r = tmp / f"A_original{tag}.wav", tmp / f"B_restored{tag}.wav"
         y = self.render(settings, start_s, end_s, cancel=cancel)
-        if settings.loudness_target is None:
+        post = None
+        if settings.broadcast:
+            gin, post = self._broadcast_estimate(settings, cancel)
+            multiband.compress_inplace(y, gin, cancel=cancel)
+        if settings.loudness_target is None and settings.broadcast:
+            # the multiband stage ends in a limiter at its margin: scale that to the peak target
+            g_o = self.preview_gain(settings)
+            g = 10 ** ((settings.peak_dbfs - multiband.BROADCAST.margin_db) / 20)
+            lim_o, lim_r = None, dynamics.Limiter(settings.peak_dbfs)
+        elif settings.loudness_target is None:
             # the export normalises the whole render's peak; estimate its gain from how much the
             # restoration changes the peak, on probes from the whole file (peaks change differently in
             # speech and music, a fixed gain from the original was up to 6 dB off)
@@ -464,8 +488,8 @@ class Project:
             # same gain the export will use (estimated from probes); the original gets its own
             # normalisation so A and B are compared at the same loudness
             g_o = self._db_gain(settings.loudness_target, self.orig_loudness, self.preview_gain(settings))
-            g = self._db_gain(settings.loudness_target, self.estimated_loudness(settings, cancel),
-                              self.preview_gain(settings))
+            est = post if post is not None else self.estimated_loudness(settings, cancel)
+            g = self._db_gain(settings.loudness_target, est, self.preview_gain(settings))
             if settings.music_ceiling_lu is not None:
                 y = np.array(y, dtype=np.float32)
                 self._tame_music(y, start_s, g, settings)

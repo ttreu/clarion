@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__, audio_io, project_file
+from .. import APP_NAME, __version__, audio_io, multiband, project_file
 from ..analysis import MIX, MUSIC
 from ..pipeline import Project, default_output_name
 from ..settings import (
@@ -50,6 +50,7 @@ from ..settings import (
 )
 from . import style, worker
 from .meter import LevelMeter
+from .spectrum import N_FFT, Spectrum
 from .timeline import Timeline, fmt
 
 LOUDNESS = [("−14 LUFS (streaming, loud)", -14.0), ("−16 LUFS (podcast, web video)", -16.0),
@@ -259,6 +260,17 @@ class MainWindow(QMainWindow):
         self.chk_ceiling.setChecked(True)
         self.chk_ceiling.toggled.connect(self._mark_stale)
         f.addRow("", self.chk_ceiling)
+        self.chk_bc = QCheckBox("Broadcast compression (multiband)")
+        self.chk_bc.setToolTip("Four-band compressor like Adobe Audition's Multiband Compressor, preset "
+                               "“Broadcast”: brings speech closer to loud music and makes the sound denser "
+                               "and more present. Runs before the loudness target is applied.")
+        self.chk_bc.setChecked(self.prefs.value("broadcast", False, type=bool))
+        self.chk_bc.toggled.connect(lambda on: (self.prefs.setValue("broadcast", on), self._mark_stale(),
+                                                self._sync_spectrum()))
+        f.addRow("", self.chk_bc)
+        self.spectrum = Spectrum()
+        f.addRow(self.spectrum)
+        self._sync_spectrum()
         self.chk_norm.toggled.connect(self._toggle_normalize)
         self._toggle_normalize(self.chk_norm.isChecked(), refresh=False)
         right.addWidget(self.chk_norm)
@@ -494,6 +506,7 @@ class MainWindow(QMainWindow):
                           normalize=self.chk_norm.isChecked(),
                           loudness_target=LOUDNESS[self.cmb_loud.currentIndex()][1],
                           music_ceiling_lu=3.0 if self.chk_ceiling.isChecked() else None,
+                          broadcast=self.chk_bc.isChecked() and self.chk_norm.isChecked(),
                           music_reduction=self.sl_music.value() / 100,
                           music_hiss_db=-6.0 if self.chk_hiss.isChecked() else 0.0,
                           **self._music_extra,
@@ -514,8 +527,10 @@ class MainWindow(QMainWindow):
     def _toggle_normalize(self, on: bool, refresh: bool = True):
         self.prefs.setValue("normalize", on)
         self.cmb_loud.setEnabled(on)
-        if hasattr(self, "chk_ceiling"):
-            self.chk_ceiling.setEnabled(on)
+        for name in ("chk_ceiling", "chk_bc"):
+            if hasattr(self, name):
+                getattr(self, name).setEnabled(on)
+        self._sync_spectrum()
         if refresh:
             self._mark_stale()
             self._auto_timer.stop()   # a switch, not a slider: no need to wait for more changes
@@ -699,6 +714,7 @@ class MainWindow(QMainWindow):
             self.cmb_loud.setCurrentIndex(min(range(len(targets)), key=lambda i: abs(targets[i] - st.loudness_target)))
         self.chk_norm.setChecked(st.normalize and st.loudness_target is not None)
         self.chk_ceiling.setChecked(st.music_ceiling_lu is not None)
+        self.chk_bc.setChecked(st.broadcast)
         if "rate_idx" in gui:
             self.cmb_rate.setCurrentIndex(int(gui["rate_idx"]))
         self._syncing = False
@@ -1085,8 +1101,15 @@ class MainWindow(QMainWindow):
             self._meter_timer.stop()
         self.btn_play.setIcon(style.icon("pause" if playing else "play", "#1b1406"))
 
+    def _sync_spectrum(self):
+        """Crossover lines in the spectrum: bright when the broadcast compressor is in use."""
+        if hasattr(self, "spectrum"):
+            self.spectrum.set_crossovers(multiband.BROADCAST.crossovers,
+                                         self.chk_bc.isChecked() and self.chk_norm.isChecked())
+
     def _feed_meter(self):
-        """Peak/RMS of the last 40 ms before the play position, read from the file being played."""
+        """Level meter (last 40 ms) and spectrum (last ~85 ms) before the play position, read from the
+        file being played."""
         if not self.player or not getattr(self, "_meter_file", None):
             return
         pos = self.player.position() / 1000
@@ -1098,18 +1121,20 @@ class MainWindow(QMainWindow):
             snd = self._meter_src[1]
             sr = snd.samplerate
             end = int(pos * sr)
-            n = int(0.04 * sr)
+            n = N_FFT
             snd.seek(max(0, end - n))
             x = snd.read(min(n, end) or n, dtype="float32", always_2d=True)
         except Exception:  # noqa: BLE001 – e.g. m4a/mp3 originals: use the decoded copy if there is one
             if not (self.project and self.project.orig is not None and self._orig_only):
                 return
-            end = int(pos * SR)
-            x = np.asarray(self.project.orig[max(0, end - int(0.04 * SR)):end], dtype=np.float32)
+            sr, end = SR, int(pos * SR)
+            x = np.asarray(self.project.orig[max(0, end - N_FFT):end], dtype=np.float32)
         if len(x) == 0:
             return
         if x.shape[1] == 1:
             x = np.repeat(x, 2, axis=1)
+        self.spectrum.set_audio(x[:, :2], sr)
+        x = x[-int(0.04 * sr):]
         peak = np.abs(x[:, :2]).max(axis=0)
         rms = np.sqrt((x[:, :2] ** 2).mean(axis=0))
         self.meter.set_levels((float(peak[0]), float(peak[1])), (float(rms[0]), float(rms[1])))
