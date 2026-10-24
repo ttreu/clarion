@@ -20,7 +20,9 @@ dependencies = [
     "soundfile>=0.12",
     "noisereduce>=3.0",
     "nara-wpe>=0.0.9",
-    "PySide6>=6.6",
+    # <6.12: the 6.12 wheels contain bindings built for macOS 26 (6.11: 15); keeps the downloadable app
+    # on the safe side for older macOS. numpy/scipy need macOS 14 anyway.
+    "PySide6>=6.6,<6.12",
 ]
 
 [project.optional-dependencies]

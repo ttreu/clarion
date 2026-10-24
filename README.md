@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon/clairon-mark.svg" width="112" alt="clarion logo"></p>
+
 # clarion
 
 **Clean up speech recorded with a field recorder or a camera – including readings with accompanying
@@ -50,14 +52,35 @@ evens out the voice when the speaker moves between the room and the PA microphon
 
 ## Install and run
 
-clarion runs on macOS (Apple Silicon or Intel). Linux should work from source; Windows is untested.
+clarion runs on macOS 14 (Sonoma) or newer. Linux should work from source; Windows is untested.
+For videos and M4A files, install [ffmpeg](https://ffmpeg.org) (`brew install ffmpeg`).
 
-**From source (recommended for now):**
+### Option 1: download the app (easiest)
+
+1. Open the [Releases](../../releases) page and download `clarion-<version>-macos-arm64.zip` (Macs with
+   Apple Silicon, M1 or newer). For Intel Macs there is no download yet: use option 2.
+2. Double-click the zip and drag **clarion.app** into your *Applications* folder.
+3. Open it. Because clarion is free software without a paid Apple developer certificate, macOS asks
+   for confirmation the first time:
+   - **macOS 15 (Sequoia) and newer:** the warning says Apple could not check the app – click *Done*.
+     Open *System Settings → Privacy & Security*, scroll down to "clarion was blocked…" and click
+     **Open Anyway**, then confirm.
+   - **macOS 14:** right-click (or Control-click) clarion.app → *Open* → *Open*.
+
+   This is needed only once.
+
+The first time you open a recording, clarion downloads the speech AI (about 35 MB, see below), so you
+need an internet connection then.
+
+The app also contains the command line:
+`/Applications/clarion.app/Contents/MacOS/clarion --cli recording.wav` (see [Command line](#command-line)).
+
+### Option 2: run from the source code
 
 1. Download the repository ("Code → Download ZIP") and unpack it, or `git clone` it.
-2. Double-click **`clarion.command`**. The first time, macOS asks for confirmation because the file is
-   not signed: right-click → *Open*. The first start installs [uv](https://docs.astral.sh/uv/) and the
-   Python packages, which takes 1–2 minutes.
+2. Double-click **`clarion.command`**. macOS asks for confirmation as described above (on macOS 15:
+   *Open Anyway* in *Privacy & Security*). The first start installs [uv](https://docs.astral.sh/uv/)
+   and the Python packages, which takes 1–2 minutes; later starts are quick.
 
 Or in a terminal:
 
@@ -66,11 +89,17 @@ uv sync
 uv run klangrestaurator
 ```
 
-On first use clarion downloads the `deep-filter` program (about 35 MB) from the
-[DeepFilterNet releases](https://github.com/Rikorose/DeepFilterNet/releases) and stores it in
-`~/Library/Application Support/Klangrestaurator/` (macOS). Analyses are cached in
-`~/Library/Caches/Klangrestaurator/` (about twice the size of the recording); you can delete that folder
-at any time.
+To work on clarion itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Where clarion keeps its files
+
+- The speech AI: the `deep-filter` program from the
+  [DeepFilterNet releases](https://github.com/Rikorose/DeepFilterNet/releases), stored in
+  `~/Library/Application Support/Klangrestaurator/`.
+- Analyses: `~/Library/Caches/Klangrestaurator/` (about twice the size of each recording). You can delete
+  this folder at any time; clarion recomputes what it needs.
+
+To uninstall, delete clarion.app and these two folders.
 
 ## How to use
 
@@ -114,19 +143,17 @@ Details are in [CLAUDE.md](CLAUDE.md), the developer notes.
 ## Building a macOS app
 
 ```bash
-./scripts/build_app.sh        # → dist/clarion.app (unsigned)
+./scripts/build_app.sh        # → dist/clarion-<version>-macos-<arch>.zip
 ```
 
-If you distribute the built app, include [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): the app bundles Qt/PySide6 and other libraries under
-the LGPL (see the notices for what that requires).
+The zip holds `clarion.app` for the architecture of the Mac that built it, ad-hoc signed and with
+[LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) inside; upload it to a GitHub
+release. The app bundles Qt/PySide6 and other libraries under the LGPL (see the notices for what that
+requires when distributing it).
 
 ## Development
 
-```bash
-uv run pytest -q -m "not slow"   # tests (a fake AI; the slow test runs the real binary)
-uvx ruff check src tests         # lint
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md): setup, tests, where things are, and how to propose changes.
 
 ## Credits
 

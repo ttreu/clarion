@@ -5,9 +5,14 @@ so the whole app changes together.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
+
+ASSETS = Path(__file__).with_name("assets")   # runtime copies of the app icon and mark (sources: assets/icon/)
 
 
 class C:
@@ -161,6 +166,22 @@ def apply(app: QApplication) -> None:
     pal.setColor(QPalette.Disabled, QPalette.WindowText, QColor(C.faint))
     app.setPalette(pal)
     app.setStyleSheet(STYLESHEET)
+
+
+def app_icon() -> QIcon:
+    """The app icon (window / Dock when run from source; the built app uses packaging/clarion.icns)."""
+    return QIcon(str(ASSETS / "clarion-icon.png"))
+
+
+def mark(size: int, dpr: float = 2.0) -> QPixmap:
+    """The clarion mark ('c' ring + speaker) without its tile, rendered sharply at ``size`` points."""
+    pm = QPixmap(int(size * dpr), int(size * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    QSvgRenderer(str(ASSETS / "clarion-mark.svg")).render(p, QRectF(0, 0, size, size))
+    p.end()
+    return pm
 
 
 # --- transport icons (vector, crisp at any size and on dark ground) ---------------------------

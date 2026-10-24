@@ -14,7 +14,7 @@ uv run klangrestaurator-cli FILE.wav      # CLI, see --help
 uv run pytest -q                          # tests (fast ones use a fake AI; one test runs the real binary)
 uv run pytest -q -m "not slow"            # offline
 uvx ruff check src tests                  # lint
-./scripts/build_app.sh                    # PyInstaller → dist/clarion.app
+./scripts/build_app.sh                    # PyInstaller → dist/clarion-<version>-macos-<arch>.zip
 ```
 
 Env vars: `KLANGRESTAURATOR_DEEPFILTER=/path/to/deep-filter` (use a local binary instead of downloading),
@@ -100,6 +100,8 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   `prepare()`, `render()`, `export()`, `write_preview()`
 - `project_file.py` – `.klang` projects (JSON): source (absolute + relative), sections, trim, tone ref, all
   Settings, GUI choices; opening one re-runs/uses the cached analysis, then applies the user's decisions
+- Icons: sources in `assets/icon/` (`make_icon.py` builds the mark and app icons; `clairon.icns` is the app
+  bundle icon); runtime copies in `gui/assets/` (`clarion-icon.png` window icon, `clarion-mark.svg` header logo)
 - `gui/style.py` – dark studio theme (colours in `C`, stylesheet, palette) + vector transport icons; `gui/meter.py`
   – stereo level meter fed from the file being played (`_feed_meter`, last 40 ms before the play position)
 - `cli.py` – CLI: `build_parser()`, `settings_from_args()` (preset + overrides), `main()`
@@ -137,6 +139,13 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 - STFT helpers take (samples, channels); a 1-D signal must be reshaped first, or gains broadcast into
   a (bins × bins × frames) array (this once ate 60 GB of RAM in `tone.apply_eq`).
 - QtMultimedia is created lazily (it can segfault in headless Linux containers).
+- Building the app (`scripts/build_app.sh`): builds in `$TMPDIR/clarion-build` because iCloud's file attributes
+  make `codesign` fail inside the project; ad-hoc signs (needed to run on Apple Silicon), puts LICENSE and
+  THIRD_PARTY_NOTICES.md in Resources, zips with `ditto`. `packaging/launch.py` must call
+  `multiprocessing.freeze_support()` first (else a library's resource-tracker helper re-launches the GUI and
+  hangs), and `clarion --cli …` runs the CLI inside the bundle (used to smoke-test a build).
+- Minimum macOS of the app is 14 (numpy/scipy wheels); PySide6 is pinned < 6.12 because 6.12's bindings are
+  built for macOS 26. Check with `otool -l … | grep minos` after dependency upgrades.
 - The project sits in iCloud-synced ~/Documents. iCloud sets the macOS `hidden` flag on files it syncs, and Python
   then skips `.pth` files while Qt skips plugins. So the venv lives in `.venv.nosync/` (iCloud ignores `*.nosync`)
   with `.venv` as a symlink to it. If it was recreated as a plain dir: `rm -rf .venv && mkdir .venv.nosync &&
