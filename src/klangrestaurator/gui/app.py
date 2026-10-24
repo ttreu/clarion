@@ -86,10 +86,11 @@ class MainWindow(QMainWindow):
         self.timeline.seek.connect(self._on_seek)
         self.timeline.relabel.connect(self._on_relabel)
         self.timeline.tone_ref.connect(self._on_tone_ref)
+        self.timeline.boundary_moved.connect(self._on_boundary)
         self.timeline.selection_changed.connect(self._on_selection)
         v.addWidget(self.timeline, 1)
-        hint = QLabel("Klicken = Position · Ziehen = Bereich wählen · Rechtsklick = Sprache/Musik korrigieren · "
-                      "Mausrad = Zoom")
+        hint = QLabel("Klicken = Position · Ziehen = Bereich wählen · Grenze ziehen = Abschnitt anpassen · "
+                      "Rechtsklick = Sprache/Musik korrigieren · Mausrad = Zoom")
         hint.setStyleSheet("color: gray; font-size: 11px;")
         v.addWidget(hint)
 
@@ -401,6 +402,14 @@ class MainWindow(QMainWindow):
         self._set_busy(False)
 
     # ------------------------------------------------------------------ segments
+    def _on_boundary(self, old: float, new: float):
+        if not self.project:
+            return
+        self.project.move_boundary(old, new)
+        self.timeline.set_segments(self.project.segments)
+        self.statusBar().showMessage(f"Grenze verschoben: {fmt(old)} → {fmt(new)}")
+        self._mark_stale()
+
     def _on_tone_ref(self, a: float, b: float):
         if not self.project:
             return

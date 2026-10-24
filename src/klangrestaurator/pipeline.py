@@ -178,6 +178,10 @@ class Project:
     def save_segments(self) -> None:
         analysis.save_segments(self.segments, self.dir / "segments.json")
 
+    def move_boundary(self, old: float, new: float) -> None:
+        self.segments = analysis.move_boundary(self.segments, old, new)
+        self.save_segments()
+
     def set_kind(self, start: float, end: float, kind: str) -> None:
         self.segments = analysis.set_kind(self.segments, start, end, kind)
         self.save_segments()

@@ -27,6 +27,7 @@ class Timeline(QWidget):
     selection_changed = Signal(float, float)  # (start, end) s, end<=start means none
     relabel = Signal(float, float, str)       # mark range as speech/music/mix
     tone_ref = Signal(float, float)           # use range as tone reference; (-1, -1) = automatic
+    boundary_moved = Signal(float, float)     # a boundary between two sections was dragged: (old, new) s
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,6 +43,8 @@ class Timeline(QWidget):
         self._drag_from: float | None = None
         self._hover: float | None = None
         self.ref: tuple[float, float] | None = None  # tone reference range (shown as a green bar)
+        self._bound: int | None = None      # index i of the dragged boundary (between segments i and i+1)
+        self._bound_from = 0.0
 
     # ---------------------------------------------------------------- data
     def set_data(self, levels: np.ndarray, segments: list[Segment], duration: float) -> None:
@@ -100,6 +103,14 @@ class Timeline(QWidget):
                 p.drawText(QRectF(x0 + 4, 0, x1 - x0 - 8, lane - 2), Qt.AlignVCenter | Qt.AlignLeft,
                            KIND_LABEL.get(s.kind, s.kind))
 
+        for i in range(len(self.segments) - 1):  # grips on the boundaries (draggable)
+            t = self.segments[i].end
+            if a <= t <= b:
+                x = self._x(t)
+                active = self._bound == i
+                p.fillRect(QRectF(x - (2 if active else 1), 0, 4 if active else 2, lane - 2),
+                           QColor(255, 255, 255, 255 if active else 200))
+
         # level envelope (dB mapped -70..0)
         lv = self.levels
         i0, i1 = max(0, int(a * 4)), min(len(lv), int(b * 4) + 1)
@@ -136,8 +147,24 @@ class Timeline(QWidget):
             p.drawText(QRectF(self._x(self._hover) + 4, lane + 2, 120, 16), Qt.AlignLeft, fmt(self._hover))
 
     # ---------------------------------------------------------------- interaction
+    def _boundary_at(self, x: float, tol: float = 5.0) -> int | None:
+        """Index i of the boundary between segments i and i+1 within ``tol`` pixels of x."""
+        best, dist = None, tol
+        for i in range(len(self.segments) - 1):
+            d = abs(self._x(self.segments[i].end) - x)
+            if d <= dist:
+                best, dist = i, d
+        return best
+
     def mousePressEvent(self, e):
         if self.levels is None or e.button() != Qt.LeftButton:
+            return
+        i = self._boundary_at(e.position().x())
+        if i is not None:  # grab a section boundary
+            # work on copies: the list belongs to the project until the move is confirmed
+            self.segments = [Segment(s.start, s.end, s.kind, s.manual) for s in self.segments]
+            self._bound, self._bound_from = i, self.segments[i].end
+            self.update()
             return
         self._drag_from = self._t(e.position().x())
         self.sel = (0.0, 0.0)
@@ -146,11 +173,26 @@ class Timeline(QWidget):
     def mouseMoveEvent(self, e):
         t = self._t(e.position().x())
         self._hover = t if self.levels is not None else None
-        if self._drag_from is not None:
+        if self._bound is not None:
+            left, right = self.segments[self._bound], self.segments[self._bound + 1]
+            t = float(np.clip(t, left.start + 0.3, right.end - 0.3))
+            left.end = right.start = t
+            self._hover = t
+        elif self._drag_from is not None:
             self.sel = (min(self._drag_from, t), max(self._drag_from, t))
+        elif self.levels is not None:
+            near = self._boundary_at(e.position().x()) is not None
+            self.setCursor(Qt.SizeHorCursor if near else Qt.ArrowCursor)
         self.update()
 
     def mouseReleaseEvent(self, e):
+        if self._bound is not None:
+            new = self.segments[self._bound].end
+            self._bound = None
+            if abs(new - self._bound_from) > 1e-3:
+                self.boundary_moved.emit(self._bound_from, new)
+            self.update()
+            return
         if self._drag_from is None:
             return
         t = self._t(e.position().x())

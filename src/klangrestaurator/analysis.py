@@ -348,6 +348,22 @@ def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0,
     return m
 
 
+def move_boundary(segs: list[Segment], old: float, new: float, min_len: float = 0.3) -> list[Segment]:
+    """Move the boundary at ``old`` to ``new`` (manual correction): both neighbours become manual.
+
+    ``new`` is kept at least ``min_len`` inside the two neighbouring sections. Returns a new list.
+    """
+    out = [Segment(s.start, s.end, s.kind, s.manual) for s in segs]
+    i = min(range(len(out) - 1), key=lambda k: abs(out[k].end - old), default=None)
+    if i is None or abs(out[i].end - old) > 1e-3:
+        return out
+    left, right = out[i], out[i + 1]
+    t = min(max(new, left.start + min_len), right.end - min_len)
+    left.end = right.start = t
+    left.manual = right.manual = True
+    return out
+
+
 def kind_mask(segs: list[Segment], kind: str, n: int, crossfade_s: float, start: int = 0) -> np.ndarray:
     """Per-sample weight of ``kind`` for samples [start, start+n), raised-cosine ramps centred on edges."""
     m = np.zeros(n, np.float32)

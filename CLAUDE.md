@@ -73,7 +73,8 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   Applied as one STFT EQ to the speech chain and the MIX voice part; music is untouched
 - `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
-- `cli.py` – CLI; `gui/app.py` main window; `gui/timeline.py` level + segment view (click/drag/right-click/zoom);
+- `cli.py` – CLI; `gui/app.py` main window; `gui/timeline.py` level + segment view (click/drag/right-click/zoom; dragging a section boundary
+  ±5 px → `analysis.move_boundary`, both neighbours become manual);
   `gui/worker.py` QThread jobs with progress + cancel
 - `tests/` – synthetic "reading" (bursty noise speech + harmonic cello) with a fake AI; one slow test with the real binary
 

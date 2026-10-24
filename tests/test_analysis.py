@@ -133,3 +133,14 @@ def test_merge_short_avoids_rapid_switching():
     assert [(s.start, s.end, s.kind) for s in out] == [(0, 20, SPEECH), (20, 30, MIX), (30, 40, SPEECH)]
     manual = [Segment(0, 10, SPEECH), Segment(10, 12, MUSIC, manual=True), Segment(12, 20, SPEECH)]
     assert merge_short(manual, 6.0)[1].manual  # manual sections stay as they are
+
+
+def test_move_boundary_marks_both_sides_manual_and_clamps():
+    from klangrestaurator.analysis import MIX, move_boundary
+    segs = [Segment(0, 10, SPEECH), Segment(10, 20, MIX), Segment(20, 30, SPEECH)]
+    out = move_boundary(segs, 10, 12.5)
+    assert [(s.start, s.end, s.kind, s.manual) for s in out] == [
+        (0, 12.5, SPEECH, True), (12.5, 20, MIX, True), (20, 30, SPEECH, False)]
+    assert segs[0].end == 10                               # input untouched
+    assert move_boundary(segs, 20, 5)[1].end == 10.3       # cannot swallow the neighbour
+    assert move_boundary(segs, 15, 16) == segs             # no boundary at 15 s: unchanged
