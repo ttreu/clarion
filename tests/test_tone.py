@@ -84,3 +84,18 @@ def test_level_curve_evens_out_quiet_and_loud_parts():
     assert before > 11 and abs(after) < 3
     assert np.all(np.abs(g) <= 10.0 + 1e-6)
     assert np.allclose(tone.level_curve(bp, None, 0.0, 10.0), 0)
+
+
+def test_level_curve_ignores_music_sections():
+    """In music sections the AI output is a faint residue; it must not drag the voice target down."""
+    voice = _voice(10, 8)
+    residue = _voice(20, 9) * 10 ** (-40 / 20)          # what the AI leaves of a cello
+    v = np.concatenate([voice, residue]).astype(np.float32)
+    bp = tone.band_powers(v)
+    fps = SR / tone.HOP
+    voiced = np.arange(len(bp)) / fps < 10
+    sl = slice(int(2 * fps), int(8 * fps))
+    g_bad = tone.level_curve(bp, None, 1.0, 10.0)
+    g_ok = tone.level_curve(bp, None, 1.0, 10.0, voiced=voiced)
+    assert g_bad[sl].mean() < -5                          # the old behaviour: speech pushed down
+    assert abs(g_ok[sl].mean()) < 1                       # fixed: speech stays where it is

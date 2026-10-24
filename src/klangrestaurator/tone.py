@@ -120,17 +120,22 @@ def voice_active(lvl_db: np.ndarray, radius_s: float = 10.0, below_db: float = 1
 
 
 def correction_curve(bp: np.ndarray, dryness: np.ndarray, strength: float, max_db: float,
-                     ref: tuple[float, float] | None = None, win_s: float = 6.0) -> np.ndarray:
+                     ref: tuple[float, float] | None = None, win_s: float = 6.0,
+                     voiced: np.ndarray | None = None) -> np.ndarray:
     """EQ gain in dB per frame and band that pulls the voice towards the reference timbre.
 
     ``dryness`` (per frame, higher = drier, e.g. AI output minus original in dB) picks the automatic
-    reference: the driest 30 % of 6 s windows. ``ref`` (seconds) overrides it.
+    reference: the driest 30 % of 6 s windows. ``ref`` (seconds) overrides it. ``voiced`` (bool per
+    frame) limits the measurement to speech sections: in music sections the AI output is only a faint
+    residue, which must not count as voice.
     """
     tot = bp.sum(axis=1)
     lvl = 10 * np.log10(tot + 1e-20)
     if not np.isfinite(lvl).any():
         return np.zeros_like(bp)
     active = voice_active(lvl)
+    if voiced is not None:
+        active &= voiced[: len(active)]
     fps = SR / HOP
     win, min_act = int(win_s * fps), int(1.5 * fps)
     shape = _windowed_shape(bp, active, win, min_act)
@@ -173,18 +178,22 @@ _LOUD_W = 10 ** (np.interp(CENTRES, [80, 100, 125, 160, 200, 250, 1000, 1250, 16
 
 
 def level_curve(bp: np.ndarray, eq_db: np.ndarray | None, strength: float, max_db: float,
-                win_s: float = 6.0) -> np.ndarray:
+                win_s: float = 6.0, voiced: np.ndarray | None = None) -> np.ndarray:
     """Gain in dB per frame that evens out the voice's loudness (speaker closer / further away).
 
     Loudness = weighted band power of loud voice frames within a sliding window, measured after the
     tone EQ (``eq_db``) so both work together. Target: the median over the file. The gain is
     clipped to ±``max_db`` and scaled by ``strength``; pauses take the neighbouring values.
+    ``voiced`` (bool per frame) limits the measurement to speech sections. Without it the faint AI
+    residue in music sections pulled the target down: 01.wav's speech was lowered by 7–10 dB.
     """
     b = bp * (10 ** (eq_db / 10) if eq_db is not None else 1.0)
     lvl = 10 * np.log10((b * _LOUD_W).sum(axis=1) + 1e-20)
     if not np.isfinite(lvl).any() or len(lvl) == 0:
         return np.zeros(len(bp), np.float32)
     active = voice_active(lvl)
+    if voiced is not None:
+        active &= voiced[: len(active)]
     fps = SR / HOP
     win, min_act = int(win_s * fps), int(1.5 * fps)
     p = np.where(active, 10 ** (lvl / 10), 0.0)
