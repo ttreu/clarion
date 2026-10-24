@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSlider,
+    QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +39,7 @@ from .timeline import Timeline, fmt
 
 AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".ogg", ".w64"}
 PREVIEW_S = 20.0
+SKIP_MS = 5000  # transport back/forward step
 
 
 class MainWindow(QMainWindow):
@@ -118,10 +121,7 @@ class MainWindow(QMainWindow):
         ab.addWidget(self.rb_a)
         ab.addWidget(self.rb_b)
         tv.addLayout(ab)
-        self.btn_play = QPushButton("▶︎ Abspielen")
-        self.btn_play.setEnabled(False)
-        self.btn_play.clicked.connect(self.toggle_play)
-        tv.addWidget(self.btn_play)
+        tv.addLayout(self._transport())
         self.lbl_prev = QLabel("")
         self.lbl_prev.setStyleSheet("color: gray;")
         tv.addWidget(self.lbl_prev)
@@ -151,8 +151,12 @@ class MainWindow(QMainWindow):
         m.addAction(a)
         a = QAction("Erkennung neu berechnen", self, triggered=self.reclassify)
         m.addAction(a)
-        play = QAction("Abspielen/Pause", self, shortcut=QKeySequence(Qt.Key_Space), triggered=self.toggle_play)
-        self.addAction(play)
+        for name, key, fn in (("Abspielen/Pause", Qt.Key_Space, self.toggle_play),
+                              ("Stopp", Qt.Key_Period, self.stop),
+                              ("Zurück", Qt.Key_Left, lambda: self.skip(-SKIP_MS)),
+                              ("Vor", Qt.Key_Right, lambda: self.skip(SKIP_MS)),
+                              ("Zum Anfang", Qt.Key_Home, self.to_start)):
+            self.addAction(QAction(name, self, shortcut=QKeySequence(key), triggered=fn))
         ab_toggle = QAction("A/B", self, shortcut=QKeySequence(Qt.Key_Tab),
                             triggered=lambda: (self.rb_a if self.rb_b.isChecked() else self.rb_b).setChecked(True))
         self.addAction(ab_toggle)
@@ -165,6 +169,33 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Bereit")
 
     # ------------------------------------------------------------------ helpers
+    def _transport(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        icon = self.style().standardIcon
+        sec = SKIP_MS // 1000
+
+        def btn(sp, tip, fn):
+            b = QToolButton()
+            b.setIcon(icon(sp))
+            b.setToolTip(tip)
+            b.setAutoRaise(False)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+            return b
+
+        self.btn_start = btn(QStyle.SP_MediaSkipBackward, "Zum Anfang (Pos1)", self.to_start)
+        self.btn_back = btn(QStyle.SP_MediaSeekBackward, f"{sec} s zurück (←)", lambda: self.skip(-SKIP_MS))
+        self.btn_play = btn(QStyle.SP_MediaPlay, "Abspielen / Pause (Leertaste)", self.toggle_play)
+        self.btn_stop = btn(QStyle.SP_MediaStop, "Stopp (.)", self.stop)
+        self.btn_fwd = btn(QStyle.SP_MediaSeekForward, f"{sec} s vor (→)", lambda: self.skip(SKIP_MS))
+        self.transport = (self.btn_start, self.btn_back, self.btn_play, self.btn_stop, self.btn_fwd)
+        self.lbl_time = QLabel("–:–– / –:––")
+        self.lbl_time.setStyleSheet("font-family: Menlo, monospace;")
+        row.addSpacing(8)
+        row.addWidget(self.lbl_time)
+        row.addStretch(1)
+        return row
+
     def _slider(self, lo, hi, unit):
         s = QSlider(Qt.Horizontal)
         s.setRange(lo, hi)
@@ -210,7 +241,8 @@ class MainWindow(QMainWindow):
             wdg.setEnabled(has and not busy)
         self.btn_open.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
-        self.btn_play.setEnabled(self.files_ab is not None and not busy)
+        for b in self.transport:
+            b.setEnabled(self.files_ab is not None and not busy)
 
     def _progress(self, stage: str, v: float):
         self.progress.setValue(int(v * 1000))
@@ -332,7 +364,6 @@ class MainWindow(QMainWindow):
             self._load_current(0)
             if self.player:
                 self.player.play()
-                self.btn_play.setText("❚❚ Pause")
 
         self._run(job, done, "Berechne Vorschau…")
 
@@ -342,11 +373,13 @@ class MainWindow(QMainWindow):
             self.player = QMediaPlayer(self)
             self.player.setAudioOutput(self.out)
             self.player.positionChanged.connect(self._on_play_pos)
+            self.player.durationChanged.connect(lambda _: self._update_time())
+            self.player.playbackStateChanged.connect(self._on_state)
         return self.player
 
     def _stop(self):
         if self.player:
-            self._stop()
+            self.player.stop()
 
     def _load_current(self, pos_ms: int):
         if not self.files_ab or not self._ensure_player():
@@ -370,14 +403,42 @@ class MainWindow(QMainWindow):
             return
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
-            self.btn_play.setText("▶︎ Abspielen")
         else:
             self.player.play()
-            self.btn_play.setText("❚❚ Pause")
+
+    def stop(self):
+        """Stop and return to the start of the preview."""
+        if self.player and self.files_ab:
+            self.player.stop()
+            self.player.setPosition(0)
+            self._on_play_pos(0)
+
+    def to_start(self):
+        if self.player and self.files_ab:
+            self.player.setPosition(0)
+
+    def skip(self, delta_ms: int):
+        if not self.player or not self.files_ab:
+            return
+        dur = self.player.duration()
+        pos = max(0, self.player.position() + delta_ms)
+        if dur > 0:
+            pos = min(pos, dur - 1)
+        self.player.setPosition(pos)
+
+    def _on_state(self, state):
+        playing = state == QMediaPlayer.PlayingState
+        self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause if playing else QStyle.SP_MediaPlay))
+
+    def _update_time(self):
+        if not self.player:
+            return
+        self.lbl_time.setText(f"{fmt(self.player.position() / 1000)} / {fmt(self.player.duration() / 1000)}")
 
     def _on_play_pos(self, ms: int):
         if self._preview_range:
             self.timeline.set_head(self._preview_range[0] + ms / 1000)
+        self._update_time()
 
     # ------------------------------------------------------------------ export
     def export_dialog(self):
