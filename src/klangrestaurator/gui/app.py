@@ -560,8 +560,8 @@ class MainWindow(QMainWindow):
 
     def about(self):
         QMessageBox.about(self, APP_NAME,
-                          f"<b>{APP_NAME} {__version__}</b><p>Restores recordings where speech and music take "
-                          "turns. © 2026 Thomas Treu, MIT License.</p>"
+                          f"<b>{APP_NAME} {__version__}</b><p>Cleans up field-recorder speech recordings and "
+                          "readings with accompanying music. © 2026 Thomas Treu, MIT License.</p>"
                           "<p>Built on: <a href='https://github.com/Rikorose/DeepFilterNet'>DeepFilterNet</a> "
                           "(Schröter et al.; MIT/Apache-2.0), "
                           "<a href='https://github.com/timsainb/noisereduce'>noisereduce</a> (Sainburg; MIT), "

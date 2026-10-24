@@ -1,18 +1,31 @@
 # clarion
 
-**Restore recordings where speech and music take turns** – readings with live music, lectures with
-interludes, services, talks with a band. clarion cleans the voice with a speech AI and treats the music
-gently, so the instruments are not destroyed the way a normal noise remover would destroy them.
+**Clean up speech recordings made with a field recorder – including readings with accompanying music.**
+A handheld recorder on the table or a stand captures a reading, a talk or an interview honestly, but
+also the recorder's hiss, the room's echo, the air conditioning and the PA loudspeaker. clarion cleans
+the voice with a speech AI and treats the music between and under the words gently, so a cello or a
+piano is not destroyed the way a normal noise remover would destroy it.
 
 ![clarion main window](docs/screenshot.png)
+
+## Made for
+
+- **Readings with accompanying music:** a book or poetry reading with a cellist, a pianist or a guitar
+  between the texts, sometimes also under the voice.
+- **Speech recordings in real rooms:** lectures, talks, sermons, panel discussions, interviews, oral
+  history – recorded with a field recorder such as a Zoom or Tascam handheld, or with a phone.
+- **Long takes:** one continuous file of an hour or more, as it comes off the recorder (WAV, 16/24-bit
+  or 32-bit float, any sample rate).
 
 ## Why
 
 Speech-enhancement AIs are excellent at removing noise and room sound from a voice, but they treat
 everything that is not speech as noise: a cello, a piano or applause gets wiped out or turns into
-watery artefacts. Classic noise reduction keeps the music, but cannot clean a voice as well.
-clarion detects which parts of a recording are speech, music, or speech over music, and processes each
-part with the method that suits it – in one pass, with smooth transitions.
+watery artefacts. Classic noise reduction keeps the music, but cannot clean a voice nearly as well.
+With a field recorder both happen in the same file: the voice needs strong cleaning, the music needs a
+light touch. clarion detects which parts of a recording are speech, music, or speech over music, and
+processes each part with the method that suits it – in one pass, with smooth transitions. It also
+evens out the voice when the speaker moves between the room and the PA microphone.
 
 ## Features
 
@@ -132,8 +145,9 @@ The full list of components and their licenses is in [THIRD_PARTY_NOTICES.md](TH
 clarion was developed by Thomas Treu with the help of [Claude Code](https://claude.com/claude-code)
 (Anthropic).
 
-Adobe and Audition are trademarks of Adobe Inc. clarion is an independent project and is not affiliated
-with or endorsed by Adobe or by the authors of the libraries above.
+Adobe and Audition are trademarks of Adobe Inc.; Zoom and Tascam are trademarks of their respective
+owners. clarion is an independent project and is not affiliated with or endorsed by any of them or by
+the authors of the libraries above.
 
 ## License
 

@@ -1,12 +1,12 @@
 [project]
 name = "klangrestaurator"
 version = "0.1.0"
-description = "clarion: restore recordings where speech and music take turns (AI denoising for speech, gentle noise reduction for music)"
+description = "clarion: clean up field-recorder speech recordings and readings with accompanying music (AI denoising for the voice, gentle noise reduction for the music)"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Thomas Treu" }]
-keywords = ["audio", "restoration", "noise reduction", "speech enhancement", "deepfilternet", "podcast"]
+keywords = ["audio", "restoration", "noise reduction", "speech enhancement", "field recording", "reading", "deepfilternet"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: MacOS",

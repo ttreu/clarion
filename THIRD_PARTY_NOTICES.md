@@ -57,7 +57,8 @@ them unmodified, as separate dynamic libraries. Anyone distributing a built `cla
 
 ## Trademarks
 
-Adobe and Audition are trademarks of Adobe Inc. The "broadcast" compressor uses the parameter values of
+Adobe and Audition are trademarks of Adobe Inc.; Zoom and Tascam (named as examples of field
+recorders) are trademarks of their respective owners. The "broadcast" compressor uses the parameter values of
 the "Broadcast" preset of Adobe Audition's Multiband Compressor as shown in that application; no Adobe
-code or files are used. clarion is not affiliated with or endorsed by Adobe or by the authors of the
-components above.
+code or files are used. clarion is not affiliated with or endorsed by any of these companies or by the
+authors of the components above.
