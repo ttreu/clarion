@@ -38,3 +38,15 @@ def test_stereo_link_is_identity_for_mono_like_input():
     e = x * 0.3
     y = chains.stereo_link(x, e)
     assert np.allclose(y[2000:-2000], e[2000:-2000], atol=1e-4)
+
+
+def test_hiss_cut_lowers_only_the_top():
+    rng = np.random.default_rng(3)
+    x = (rng.standard_normal((4 * SR, 2)) * 0.05).astype(np.float32)
+    y = chains.hiss_cut(x, -6.0)
+    f, px = __import__("scipy.signal", fromlist=["welch"]).welch(x[:, 0], SR, nperseg=4096)
+    _, py = __import__("scipy.signal", fromlist=["welch"]).welch(y[:, 0], SR, nperseg=4096)
+    d = 10 * np.log10(py / px)
+    assert abs(d[(f > 14000) & (f < 20000)].mean() - (-6.0)) < 0.7     # top: about -6 dB
+    assert abs(d[(f > 100) & (f < 2000)].mean()) < 0.2                  # body: untouched
+    np.testing.assert_allclose(chains.hiss_cut(x, 0.0), x)

@@ -9,11 +9,13 @@ SR = 48_000  # internal processing rate (DeepFilterNet requires 48 kHz)
 @dataclass(frozen=True)
 class Settings:
     # --- speech chain -------------------------------------------------------
-    speech_reduction_db: float = 20.0
+    speech_reduction_db: float = 40.0
     """How far noise/reverb may be pushed down in speech passages.
-    The AI output is blended with this amount of the original (attenuation limit)."""
-    speech_dereverb: bool = False
-    """Additional classic dereverberation (WPE) on speech. Slow, adds dryness."""
+    The AI output is blended with this amount of the original (attenuation limit).
+    40 dB + WPE chosen by ear on 01.wav and 02.WAV over 20/25/30 dB (02: noise −27 → −34 dB below the
+    voice); the price is a little more "breathing" of the noise floor with the syllables."""
+    speech_dereverb: bool = True
+    """Additional classic dereverberation (WPE) on speech. ~3.5× slower render, adds dryness."""
     speech_highpass_hz: float = 70.0
     speech_stereo_link: bool = True
     """Apply the AI's suppression with one gain for both channels (stops the voice drifting L/R)."""
@@ -48,9 +50,13 @@ class Settings:
     """Largest level correction before ``level_match`` is applied."""
 
     # --- music chain --------------------------------------------------------
-    music_reduction: float = 0.70
-    """0..1 – proportion of stationary noise removed in music passages (0.7 ≈ -10 dB)."""
+    music_reduction: float = 0.85
+    """0..1 – proportion of stationary noise removed in music passages (0.85 ≈ -10 dB between notes
+    on 01.wav)."""
     music_highpass_hz: float = 30.0
+    music_hiss_db: float = -6.0
+    """Shelf above 8 kHz for music (and the music share of speech + music); 0 = off. Chosen by ear on
+    01.wav together with 85 % reduction over stronger or two-pass NR (no 'underwater' sound)."""
 
     # --- segmentation -------------------------------------------------------
     crossfade_s: float = 0.5
@@ -64,6 +70,17 @@ class Settings:
     active_level_db: float = -42.0
     """Frames quieter than this are treated as pauses (not used for classification)."""
 
+    # --- loudness (after restoration) ----------------------------------------------
+    normalize: bool = True
+    """Loudness normalisation to ``loudness_target`` plus limiter. Off: only peak normalisation to
+    ``peak_dbfs`` (the behaviour before). A mastering stage (EQ + multiband compression) and a voice
+    compressor were tried and dropped: in a blind comparison the plain restoration sounded best."""
+    loudness_target: float | None = -16.0
+    """Integrated loudness of the export in LUFS (EBU R128 / ITU-R BS.1770), followed by a limiter.
+    None: only normalise the peak to ``peak_dbfs`` as before."""
+    limiter_db: float = -1.0
+    """Limiter ceiling (dBFS) after loudness normalisation."""
+
     # --- output ---------------------------------------------------------------
     peak_dbfs: float = -1.0
 
@@ -73,9 +90,13 @@ class Settings:
     def with_(self, **kw) -> Settings:
         return replace(self, **kw)
 
+    def effective(self) -> Settings:
+        """Settings as processing sees them (switched-off normalisation means peak mode)."""
+        return self if self.normalize else replace(self, loudness_target=None)
+
 
 PRESETS: dict[str, Settings] = {
     "Natürlich": Settings(),
-    "Kräftig": Settings(speech_reduction_db=30.0, speech_dereverb=True, music_reduction=0.85),
-    "Sanft": Settings(speech_reduction_db=12.0, music_reduction=0.5),
+    "Kräftig": Settings(music_reduction=0.95),
+    "Sanft": Settings(speech_reduction_db=20.0, speech_dereverb=False, music_reduction=0.5, music_hiss_db=-3.0),
 }

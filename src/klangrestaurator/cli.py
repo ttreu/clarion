@@ -26,10 +26,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-p", "--preset", default="Natürlich", choices=list(PRESETS))
     ap.add_argument("--speech-db", type=float, help="Rauschreduktion Sprache in dB (überschreibt Preset)")
     ap.add_argument("--music", type=float, help="Rauschreduktion Musik 0..1 (überschreibt Preset)")
+    ap.add_argument("--hiss", type=float, help="Musik: Absenkung über 8 kHz in dB, z. B. -6 (0 = aus)")
     ap.add_argument("--mix-music", type=float,
                     help="„Sprache + Musik“: Anteil des entrauschten Originals 0..1 (Standard 0.5)")
     ap.add_argument("--tone", type=float, help="Klang der Stimme angleichen 0..1 (Standard 0.7, 0 = aus)")
     ap.add_argument("--level", type=float, help="Lautstärke der Stimme angleichen 0..1 (Standard 0.7, 0 = aus)")
+    ap.add_argument("--no-normalize", action="store_true",
+                    help="Keine Lautheits-Normalisierung: nur Spitzenpegel −1 dBFS statt LUFS + Limiter")
+    ap.add_argument("--lufs", help="Ziel-Lautheit in LUFS (Standard -16) oder 'peak' für nur Spitzenpegel -1 dBFS")
     ap.add_argument("--dereverb", action=argparse.BooleanOptionalAction, help="Zusätzliche Hallreduktion (WPE)")
     ap.add_argument("--keep-rate", action="store_true", help="Original-Samplerate statt 48 kHz ausgeben")
     ap.add_argument("--segments", action="store_true",
@@ -41,12 +45,18 @@ def main(argv: list[str] | None = None) -> int:
         st = st.with_(speech_reduction_db=a.speech_db)
     if a.music is not None:
         st = st.with_(music_reduction=a.music)
+    if a.hiss is not None:
+        st = st.with_(music_hiss_db=-abs(a.hiss))
     if a.mix_music is not None:
         st = st.with_(mix_music=a.mix_music)
     if a.tone is not None:
         st = st.with_(tone_match=a.tone)
     if a.level is not None:
         st = st.with_(level_match=a.level)
+    if a.no_normalize:
+        st = st.with_(normalize=False)
+    if a.lufs is not None:
+        st = st.with_(loudness_target=None if a.lufs.lower() == "peak" else float(a.lufs))
     if a.dereverb is not None:
         st = st.with_(speech_dereverb=a.dereverb)
 

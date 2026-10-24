@@ -92,17 +92,59 @@ def load_to_memmap(path: Path, dest: Path, progress=None) -> np.memmap:
     return mm
 
 
+class StreamWriter:
+    """Write 48 kHz audio arriving in blocks of any length, optionally resampling seamlessly.
+
+    Resampling works on fixed chunks with ``ctx`` samples of context on both sides, so block
+    borders leave no clicks (plain per-block resample_poly zero-pads every edge).
+    """
+
+    def __init__(self, dest: Path, channels: int, out_sr: int = SR, subtype: str = "PCM_24",
+                 chunk_s: int = BLOCK_S, ctx: int = 4800):
+        self.f = sf.SoundFile(str(dest), "w", out_sr, channels, subtype=subtype)
+        g = np.gcd(out_sr, SR)
+        self.up, self.down = out_sr // g, SR // g
+        self.L, self.P = chunk_s * SR, ctx
+        self.buf = np.zeros((0, channels), np.float32)
+        self.prev = np.zeros((0, channels), np.float32)   # last ctx samples already written
+
+    def _emit(self, chunk: np.ndarray, nxt: np.ndarray) -> None:
+        if self.up == self.down:
+            y = chunk
+        else:
+            seg = np.concatenate([self.prev, chunk, nxt])
+            y = resample_poly(seg, self.up, self.down, axis=0)
+            i0 = len(self.prev) * self.up // self.down
+            y = y[i0:i0 + len(chunk) * self.up // self.down]
+        self.f.write(np.clip(y, -1.0, 1.0))
+        self.prev = chunk[-self.P:]
+
+    def write(self, x: np.ndarray) -> None:
+        self.buf = np.concatenate([self.buf, np.asarray(x, dtype=np.float32)])
+        while len(self.buf) >= self.L + self.P:
+            self._emit(self.buf[:self.L], self.buf[self.L:self.L + self.P])
+            self.buf = self.buf[self.L:]
+
+    def close(self) -> None:
+        if len(self.buf):
+            self._emit(self.buf, np.zeros((0, self.buf.shape[1]), np.float32))
+        self.f.close()
+
+
 def write_wav(x: np.ndarray, sr: int, dest: Path, start: int = 0, stop: int | None = None,
-              gain: float = 1.0, out_sr: int = SR, subtype: str = "PCM_24", progress=None) -> None:
-    """Write (a slice of) a 48 kHz array to a WAV file in blocks, optionally resampling."""
+              gain: float = 1.0, out_sr: int = SR, subtype: str = "PCM_24", progress=None,
+              limiter=None) -> None:
+    """Write (a slice of) a 48 kHz array to a WAV file in blocks: gain → limiter → resampling."""
     stop = len(x) if stop is None else stop
     blk = BLOCK_S * sr
-    with sf.SoundFile(str(dest), "w", out_sr, x.shape[1], subtype=subtype) as f:
+    w = StreamWriter(Path(dest), x.shape[1], out_sr, subtype)
+    try:
         for s in range(start, stop, blk):
             y = np.asarray(x[s:min(stop, s + blk)], dtype=np.float32) * gain
-            if out_sr != sr:
-                g = np.gcd(out_sr, sr)
-                y = resample_poly(y, out_sr // g, sr // g, axis=0)
-            f.write(np.clip(y, -1.0, 1.0))
+            w.write(limiter.process(y) if limiter else y)
             if progress:
                 progress((s - start + blk) / max(1, stop - start))
+        if limiter:
+            w.write(limiter.flush())
+    finally:
+        w.close()

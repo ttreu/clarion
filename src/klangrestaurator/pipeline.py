@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import analysis, audio_io, chains, dfn, tone
+from . import analysis, audio_io, chains, dfn, dynamics, tone
 from .analysis import MIX, SPEECH, Segment
 from .settings import SR, Settings
 
@@ -55,6 +55,8 @@ class Project:
         self.enh_levels: np.ndarray | None = None
         self._curve_key = None
         self._curve: np.ndarray | None = None
+        self._loud_cache: dict = {}
+        self._probe_cache: dict = {}
 
     # ------------------------------------------------------------------ analysis
     @property
@@ -160,18 +162,25 @@ class Project:
         """Voice EQ (dB, frames × bands): tone matching plus level matching, or None when both are off."""
         if (settings.tone_match <= 0 and settings.level_match <= 0) or self.voice_bands is None:
             return None
+        segs = tuple((s.start, s.end, s.kind) for s in self.segments)
         key = (settings.tone_match, settings.tone_max_db, self.tone_ref, settings.level_match,
-               settings.level_max_db)
+               settings.level_max_db, segs)
         if key != self._curve_key:
             bp = self.voice_bands
             curve = np.zeros_like(bp)
+            t = np.arange(len(bp)) * tone.HOP / SR
+            voiced = np.zeros(len(bp), bool)        # only speech sections count as voice
+            for sg in self.segments:
+                if sg.kind in (SPEECH, MIX):
+                    voiced |= (t >= sg.start) & (t < sg.end)
             if settings.tone_match > 0:
                 fr = np.arange(len(bp)) * tone.HOP / SR        # frame times (s)
                 dry = np.interp(fr * 4, np.arange(len(self.levels)) + 0.5, self.enh_levels - self.levels)
                 curve = tone.correction_curve(bp, dry, settings.tone_match, settings.tone_max_db,
-                                              ref=self.tone_ref)
+                                              ref=self.tone_ref, voiced=voiced)
             if settings.level_match > 0:
-                curve = curve + tone.level_curve(bp, curve, settings.level_match, settings.level_max_db)[:, None]
+                curve = curve + tone.level_curve(bp, curve, settings.level_match, settings.level_max_db,
+                                                 voiced=voiced)[:, None]
             self._curve, self._curve_key = curve, key
         return self._curve
 
@@ -203,6 +212,7 @@ class Project:
     def render(self, settings: Settings, start_s: float = 0.0, end_s: float | None = None,
                progress: Progress = None, cancel: Cancel = None) -> np.ndarray:
         """Render [start_s, end_s) into a float32 array (memmap for long ranges)."""
+        settings = settings.effective()
         assert self.orig is not None and self.enh is not None, "prepare() zuerst aufrufen"
         p = progress or (lambda *_: None)
         N = len(self.orig)
@@ -266,7 +276,8 @@ class Project:
             pa, pb = max(0, a - pad), min(N, b + pad)
             o = np.asarray(self.orig[pa:pb])
             x = chains.highpass(o, settings.music_highpass_hz)[a - pa:b - pa]
-            y = chains.music_chain(o, noise, settings.music_reduction, settings.music_highpass_hz)[a - pa:b - pa]
+            y = chains.music_chain(o, noise, settings.music_reduction, settings.music_highpass_hz,
+                                   settings.music_hiss_db)[a - pa:b - pa]
             ms = analysis.speech_mask(segs, b - a, settings.crossfade_s, start=a,
                                       onset_fade_s=settings.onset_fade_s, mix_fade_s=settings.mix_fade_s)[:, None]
             out[a - A:b - A] += (1 - ms) * (y - x)
@@ -278,9 +289,9 @@ class Project:
                 v = v[a - pa:b - pa]
                 # the music share gets a stronger NR: noise is stationary, music isn't, so this costs
                 # little music (02.WAV: noise −13 dB instead of −9 dB, cello −2.4 dB instead of −1.8 dB)
-                ym = chains.music_chain(o, noise, settings.mix_reduction, settings.music_highpass_hz)
-                if settings.speech_dereverb:  # "Zusätzliche Hallreduktion" also dries the room sound here
-                    ym = chains.wpe_dereverb(ym)
+                ym = chains.music_chain(o, noise, settings.mix_reduction, settings.music_highpass_hz,
+                                        settings.music_hiss_db)
+                # no WPE here: it treats sustained notes as reverb (02.WAV: −4 dB cello in the word gaps)
                 ym = ym[a - pa:b - pa]
                 wm = analysis.kind_mask(segs, MIX, b - a, settings.mix_fade_s, start=a)[:, None]
                 out[a - A:b - A] += wm * (v + settings.mix_music * ym - y)
@@ -298,14 +309,64 @@ class Project:
         """Gain for short previews, based on the original's peak (no full render needed)."""
         return 10 ** (settings.peak_dbfs / 20) / max(self.meta.get("peak", 1.0), 1e-6)
 
+    @property
+    def orig_loudness(self) -> float:
+        """Integrated loudness (LUFS) of the whole original, measured once and kept in meta.json."""
+        if "lufs" not in self.meta:
+            self.meta["lufs"] = dynamics.loudness(self.orig)
+            (self.dir / "meta.json").write_text(json.dumps(self.meta))
+        return float(self.meta["lufs"])
+
+    def _probes(self, settings: Settings, cancel: Cancel = None) -> tuple[np.ndarray, np.ndarray]:
+        """(restored, original) audio of 8 probes à 2 s spread over the file (whole file if ≤ 20 s).
+
+        Rendered before loudness normalisation; cached per restoration settings and sections.
+        """
+        st = settings.with_(loudness_target=None, normalize=False)
+        key = (st, tuple((s.start, s.end, s.kind, s.manual) for s in self.segments), self.tone_ref)
+        if key not in self._probe_cache:
+            if self.duration <= 20:
+                pr, po = self.render(st, cancel=cancel), np.asarray(self.orig)
+            else:
+                starts = np.linspace(0, self.duration - 2, 8)
+                ys = [self.render(st, t, t + 2, cancel=cancel) for t in starts]
+                pr = np.concatenate(ys)
+                po = np.concatenate([np.asarray(self.orig[int(t * SR):int(t * SR) + len(y)])
+                                     for t, y in zip(starts, ys, strict=True)])
+            self._probe_cache = {key: (np.asarray(pr, np.float32), np.asarray(po, np.float32))}
+        self._probe_key = key
+        return self._probe_cache[key]
+
+    def estimated_loudness(self, settings: Settings, cancel: Cancel = None) -> float:
+        """Loudness (LUFS) the full render would have, without rendering it all.
+
+        Short files are rendered completely; otherwise the change the restoration makes on the probes
+        is added to the original's loudness (within ~0.5 dB on the test files; a single preview range
+        can be off by 6 dB because speech loses more than music).
+        """
+        pr, po = self._probes(settings, cancel)
+        if self.duration <= 20:
+            return dynamics.loudness(pr)
+        return self.orig_loudness + dynamics.loudness(pr) - dynamics.loudness(po)
+
+    @staticmethod
+    def _db_gain(target: float, measured: float, fallback: float = 1.0) -> float:
+        return 10 ** ((target - measured) / 20) if np.isfinite(measured) else fallback
+
     def export(self, settings: Settings, dest: Path | str, out_sr: int = SR, subtype: str = "PCM_24",
                start_s: float = 0.0, end_s: float | None = None, progress: Progress = None,
                cancel: Cancel = None) -> Path:
         p = progress or (lambda *_: None)
-        y = self.render(settings, start_s, end_s, progress=lambda s, v: p(s, 0.9 * v), cancel=cancel)
-        g = self.output_gain(y, settings)
+        settings = settings.effective()
+        y = self.render(settings, start_s, end_s, progress=lambda s, v: p(s, 0.85 * v), cancel=cancel)
         dest = Path(dest)
-        audio_io.write_wav(y, SR, dest, gain=g, out_sr=out_sr, subtype=subtype,
+        if settings.loudness_target is None:   # peak normalisation only (as before)
+            g, lim = self.output_gain(y, settings), None
+        else:                                  # loudness normalisation + limiter
+            p("Lautheit messen", 0.86)
+            g = self._db_gain(settings.loudness_target, dynamics.loudness(y), self.output_gain(y, settings))
+            lim = dynamics.Limiter(settings.limiter_db)
+        audio_io.write_wav(y, SR, dest, gain=g, out_sr=out_sr, subtype=subtype, limiter=lim,
                            progress=lambda v: p("Datei schreiben", 0.9 + 0.1 * min(1, v)))
         del y
         (self.dir / "render.npy").unlink(missing_ok=True)
@@ -319,15 +380,32 @@ class Project:
         ``slot`` picks one of several file pairs, so a player can keep reading the previous preview
         while the next one is written.
         """
-        g = self.preview_gain(settings)
+        settings = settings.effective()
         tmp = Path(tempfile.gettempdir()) / "klangrestaurator_preview"
         tmp.mkdir(exist_ok=True)
         a, b = int(start_s * SR), int(min(self.duration, end_s) * SR)
         tag = f"_{slot}" if slot else ""
         f_o, f_r = tmp / f"A_original{tag}.wav", tmp / f"B_restauriert{tag}.wav"
-        audio_io.write_wav(self.orig, SR, f_o, start=a, stop=b, gain=g, subtype="PCM_16")
         y = self.render(settings, start_s, end_s, cancel=cancel)
-        audio_io.write_wav(y, SR, f_r, gain=g, subtype="PCM_16")
+        if settings.loudness_target is None:
+            # the export normalises the whole render's peak; estimate its gain from how much the
+            # restoration changes the peak, on probes from the whole file (peaks change differently in
+            # speech and music, a fixed gain from the original was up to 6 dB off)
+            g_o = self.preview_gain(settings)
+            pr, po = self._probes(settings, cancel)
+            pk_o, pk_r = float(np.abs(po).max()), float(np.abs(pr).max())
+            g = g_o * pk_o / pk_r if pk_o > 0 and pk_r > 0 else g_o
+            lim_o = None
+            lim_r = dynamics.Limiter(settings.peak_dbfs)   # estimate may overshoot locally: stay safe
+        else:
+            # same gain the export will use (estimated from probes); the original gets its own
+            # normalisation so A and B are compared at the same loudness
+            g_o = self._db_gain(settings.loudness_target, self.orig_loudness, self.preview_gain(settings))
+            g = self._db_gain(settings.loudness_target, self.estimated_loudness(settings, cancel),
+                              self.preview_gain(settings))
+            lim_o, lim_r = dynamics.Limiter(settings.limiter_db), dynamics.Limiter(settings.limiter_db)
+        audio_io.write_wav(self.orig, SR, f_o, start=a, stop=b, gain=g_o, subtype="PCM_16", limiter=lim_o)
+        audio_io.write_wav(y, SR, f_r, gain=g, subtype="PCM_16", limiter=lim_r)
         return f_o, f_r
 
 

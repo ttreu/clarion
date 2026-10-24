@@ -32,7 +32,12 @@ def test_end_to_end_with_fake_ai(reading_file, tmp_path, no_dfn):
     assert sr == SR and sf.info(out).subtype == "PCM_24"
     assert len(y) == 30 * SR
     assert np.isfinite(y).all()
-    assert abs(20 * np.log10(np.abs(y).max()) - (-1.0)) < 0.1
+    from klangrestaurator import dynamics
+    assert abs(dynamics.loudness(y) - PRESETS["Natürlich"].loudness_target) < 1.0   # default: LUFS target
+    assert 20 * np.log10(np.abs(y).max()) <= -1.0 + 1e-3
+    out = proj.export(PRESETS["Natürlich"].with_(loudness_target=None), tmp_path / "peak.wav")
+    y, _ = sf.read(out)
+    assert abs(20 * np.log10(np.abs(y).max()) - (-1.0)) < 0.1                       # peak mode as before
 
     # cached: second prepare must not re-run the AI
     proj2 = Project(src, workdir=tmp_path / "work")
@@ -93,3 +98,33 @@ def test_adjacent_music_and_mix_are_not_denoised_twice(reading_file, no_dfn):
     proj.set_kind(15, 20, MIX)                 # music 10–15 | mix 15–20, boundary at 15 s
     y = proj.render(st.with_(mix_fade_s=0.01), 14.5, 14.9)  # just before the boundary: still music
     np.testing.assert_allclose(y, ref[: len(y)], atol=2e-3)
+
+
+def test_export_hits_loudness_target_under_limiter(reading_file, no_dfn, tmp_path):
+    from klangrestaurator import dynamics
+    path, _ = reading_file
+    proj = Project(path)
+    proj.prepare()
+    dest = tmp_path / "out.wav"
+    proj.export(PRESETS["Natürlich"].with_(loudness_target=-16.0), dest)
+    y, sr = sf.read(dest, dtype="float32")
+    assert abs(dynamics.loudness(y) - (-16.0)) < 1.0
+    assert np.abs(y).max() <= 10 ** (-1 / 20) + 1e-3
+    a, b = proj.write_preview(PRESETS["Natürlich"].with_(loudness_target=-16.0), 0, 30)
+    yb, _ = sf.read(b, dtype="float32")
+    assert abs(dynamics.loudness(yb) - (-16.0)) < 1.5          # preview: estimate of the export level
+
+
+def test_normalize_switch_off_restores_old_behaviour(reading_file, no_dfn, tmp_path):
+    from klangrestaurator import dynamics
+    path, _ = reading_file
+    proj = Project(path)
+    proj.prepare()
+    on = PRESETS["Natürlich"]
+    off = on.with_(normalize=False)
+    assert off.effective().loudness_target is None and on.effective() is on
+    y, _ = sf.read(proj.export(off, tmp_path / "off.wav"))
+    assert abs(20 * np.log10(np.abs(y).max()) - (-1.0)) < 0.1          # peak normalisation only
+    y, _ = sf.read(proj.export(on.with_(loudness_target=-14.0), tmp_path / "on.wav"))
+    assert abs(dynamics.loudness(y) - (-14.0)) < 1.0
+    assert np.abs(y).max() <= 10 ** (-1 / 20) + 1e-3

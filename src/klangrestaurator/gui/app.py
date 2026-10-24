@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
@@ -39,8 +41,11 @@ from ..settings import PRESETS, SR, Settings
 from . import worker
 from .timeline import Timeline, fmt
 
+LOUDNESS = [("−14 LUFS (Streaming, laut)", -14.0), ("−16 LUFS (Podcast, Web-Video)", -16.0),
+            ("−18 LUFS (Lesung mit Musik)", -18.0), ("−23 LUFS (Rundfunk, EBU R128)", -23.0)]
 AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".ogg", ".w64"}
 PREVIEW_S = 20.0
+PREVIEW_KEEP = 8  # remembered previews for instant switching between settings
 SKIP_MS = 5000  # transport back/forward step
 
 
@@ -55,7 +60,11 @@ class MainWindow(QMainWindow):
         self._job = None
         self._preview_range: tuple[float, float] | None = None
         self._preview_stale = True
-        self._preview_slot = 0          # alternates 0/1 so the player never reads a file being written
+        # remembered previews: key (settings, range, sections) → (A file, B file); each has its own files,
+        # so switching back to a computed state is instant and nothing being played gets overwritten
+        self._previews: OrderedDict[tuple, tuple[Path, Path]] = OrderedDict()
+        self._slot_seq = 0
+        self._clear_preview_files()
         self._job_is_preview = False
         self._refresh_pending = False
         self._next_range: tuple[float, float] | None = None  # preview range wanted by a new selection
@@ -97,15 +106,25 @@ class MainWindow(QMainWindow):
         mid = QHBoxLayout()
         v.addLayout(mid)
 
-        # settings
-        g = QGroupBox("Einstellungen")
-        f = QFormLayout(g)
+        # settings, grouped along the signal path: sound restoration (left) | loudness + output (right)
+        settings_box = QWidget()
+        cols = QHBoxLayout(settings_box)
+        cols.setContentsMargins(0, 0, 0, 0)
+        left, right = QVBoxLayout(), QVBoxLayout()
+        cols.addLayout(left, 3)
+        cols.addLayout(right, 2)
+
+        top = QFormLayout()
         self.cmb_preset = QComboBox()
         self.cmb_preset.addItems(list(PRESETS))
         self.cmb_preset.currentTextChanged.connect(self._apply_preset)
-        f.addRow("Voreinstellung", self.cmb_preset)
+        top.addRow("Voreinstellung", self.cmb_preset)
+        left.addLayout(top)
+
+        g_sp = QGroupBox("Klangverbesserung · Sprache")
+        f = QFormLayout(g_sp)
         self.sl_speech, self.lbl_speech = self._slider(0, 40, "dB")
-        f.addRow("Sprache: Rauschreduktion", self._pair(self.sl_speech, self.lbl_speech))
+        f.addRow("Rauschreduktion", self._pair(self.sl_speech, self.lbl_speech))
         self.chk_wpe = QCheckBox("Zusätzliche Hallreduktion (langsamer, trockener)")
         self.chk_wpe.toggled.connect(self._mark_stale)
         f.addRow("", self.chk_wpe)
@@ -113,22 +132,66 @@ class MainWindow(QMainWindow):
         self.sl_tone.setToolTip("Gleicht die Klangfarbe der Stimme an, wenn sich die Sprechposition ändert "
                                 "(z. B. nah am Mikrofon der Beschallung: dröhnend und scharf). Ziel sind die "
                                 "trockensten Stellen der Datei oder eine per Rechtsklick gewählte Klangreferenz.")
-        f.addRow("Sprache: Klang angleichen", self._pair(self.sl_tone, self.lbl_tone))
+        f.addRow("Klang angleichen", self._pair(self.sl_tone, self.lbl_tone))
         self.sl_level, self.lbl_level = self._slider(0, 100, "%")
         self.sl_level.setToolTip("Gleicht die Lautstärke der Stimme über die Datei an (gemessen über je 6 s), "
                                  "z. B. nah am Mikrofon vs. normale Sitzposition. Die Musik bleibt unverändert.")
-        f.addRow("Sprache: Lautstärke angleichen", self._pair(self.sl_level, self.lbl_level))
+        f.addRow("Lautstärke angleichen", self._pair(self.sl_level, self.lbl_level))
+        left.addWidget(g_sp)
+
+        g_mu = QGroupBox("Klangverbesserung · Musik")
+        f = QFormLayout(g_mu)
         self.sl_music, self.lbl_music = self._slider(0, 100, "%")
-        f.addRow("Musik: Rauschreduktion", self._pair(self.sl_music, self.lbl_music))
+        f.addRow("Rauschreduktion", self._pair(self.sl_music, self.lbl_music))
+        self.chk_hiss = QCheckBox("Hochton-Rauschen absenken (ab 8 kHz)")
+        self.chk_hiss.setToolTip("Senkt bei Musik alles über 8 kHz sanft ab – dort liegt vor allem Rauschen, "
+                                 "Instrumente wie das Cello haben dort kaum Anteile.")
+        self.chk_hiss.toggled.connect(self._mark_stale)
+        f.addRow("", self.chk_hiss)
+        left.addWidget(g_mu)
+
+        g_mix = QGroupBox("Klangverbesserung · Sprache + Musik")
+        f = QFormLayout(g_mix)
         self.sl_mix, self.lbl_mix = self._slider(0, 100, "%")
-        self.sl_mix.setToolTip("„Sprache + Musik“ = KI-Stimme + dieser Anteil des sanft entrauschten Originals. "
+        self.sl_mix.setToolTip("„Sprache + Musik“ = KI-Stimme + dieser Anteil des entrauschten Originals. "
                                "Weniger: trockener, weniger Rauschen, Musik leiser. "
                                "Mehr: mehr Musik, aber auch mehr Raumklang und Rauschen.")
-        f.addRow("Sprache + Musik: Musikanteil", self._pair(self.sl_mix, self.lbl_mix))
+        f.addRow("Musikanteil", self._pair(self.sl_mix, self.lbl_mix))
+        left.addWidget(g_mix)
+        left.addStretch(1)
+        for box in (g_sp, g_mu, g_mix):  # same label width → sliders line up across the groups
+            form = box.layout()
+            for r in range(form.rowCount()):
+                item = form.itemAt(r, QFormLayout.LabelRole)
+                if item and item.widget():
+                    item.widget().setMinimumWidth(150)
+
+        # loudness: the group's own checkbox switches it on/off (children are disabled when off)
+        self.chk_norm = QGroupBox("Lautheit")
+        self.chk_norm.setCheckable(True)
+        self.chk_norm.setToolTip("Bringt den Export auf eine Ziel-Lautheit (EBU R128 / ITU-R BS.1770), danach ein "
+                                 "Limiter bei −1 dBFS. Aus: nur auf −1 dBFS Spitzenpegel normalisiert.")
+        self.chk_norm.setChecked(self.prefs.value("normalize", True, type=bool))
+        f = QFormLayout(self.chk_norm)
+        self.cmb_loud = QComboBox()
+        self.cmb_loud.addItems([label for label, _ in LOUDNESS])
+        self.cmb_loud.setToolTip("Gilt für Export und Vorschau (dort als Schätzung).")
+        self.cmb_loud.setCurrentIndex(min(int(self.prefs.value("loudness_idx", 1)), len(LOUDNESS) - 1))
+        self.cmb_loud.currentIndexChanged.connect(lambda i: (self.prefs.setValue("loudness_idx", i),
+                                                             self._mark_stale()))
+        f.addRow("Ziel", self.cmb_loud)
+        self.chk_norm.toggled.connect(self._toggle_normalize)
+        self._toggle_normalize(self.chk_norm.isChecked(), refresh=False)
+        right.addWidget(self.chk_norm)
+
+        g_out = QGroupBox("Ausgabe")
+        f = QFormLayout(g_out)
         self.cmb_rate = QComboBox()
         self.cmb_rate.addItems(["48 kHz (Video)", "Original-Samplerate"])
-        f.addRow("Ausgabe (24 bit WAV)", self.cmb_rate)
-        mid.addWidget(g, 3)
+        f.addRow("WAV 24 bit", self.cmb_rate)
+        right.addWidget(g_out)
+        right.addStretch(1)
+        mid.addWidget(settings_box, 3)
 
         # preview / transport
         t = QGroupBox("Vorhören")
@@ -269,7 +332,10 @@ class MainWindow(QMainWindow):
                           speech_dereverb=self.chk_wpe.isChecked(),
                           tone_match=self.sl_tone.value() / 100,
                           level_match=self.sl_level.value() / 100,
+                          normalize=self.chk_norm.isChecked(),
+                          loudness_target=LOUDNESS[self.cmb_loud.currentIndex()][1],
                           music_reduction=self.sl_music.value() / 100,
+                          music_hiss_db=(base.music_hiss_db or -6.0) if self.chk_hiss.isChecked() else 0.0,
                           mix_music=self.sl_mix.value() / 100)
 
     def _apply_preset(self, name: str):
@@ -278,12 +344,21 @@ class MainWindow(QMainWindow):
             return
         self.sl_speech.setValue(int(st.speech_reduction_db))
         self.sl_music.setValue(int(round(st.music_reduction * 100)))
+        self.chk_hiss.setChecked(st.music_hiss_db < 0)
         self.sl_mix.setValue(int(round(st.mix_music * 100)))
         self.chk_wpe.setChecked(st.speech_dereverb)
         self.sl_tone.setValue(int(round(st.tone_match * 100)))
         self.sl_level.setValue(int(round(st.level_match * 100)))
         self.prefs.setValue("preset", name)
         self._mark_stale()
+
+    def _toggle_normalize(self, on: bool, refresh: bool = True):
+        self.prefs.setValue("normalize", on)
+        self.cmb_loud.setEnabled(on)
+        if refresh:
+            self._mark_stale()
+            self._auto_timer.stop()   # a switch, not a slider: no need to wait for more changes
+            QTimer.singleShot(20, self._auto_refresh)
 
     def _mark_stale(self, *_):
         self._preview_stale = True
@@ -372,6 +447,7 @@ class MainWindow(QMainWindow):
     def load(self, path: Path):
         self._stop()
         self.files_ab = None
+        self._clear_preview_files()
         self.prefs.setValue("last_dir", str(path.parent))
         self.project = Project(path)
         self.lbl_file.setText(str(path))
@@ -465,7 +541,7 @@ class MainWindow(QMainWindow):
                 b = a + PREVIEW_S
             b = min(b, a + 120, self.project.duration)  # keep previews short, stay inside the file
         st, proj = self.settings(), self.project
-        slot = self._preview_slot = 1 - self._preview_slot
+        key = self._preview_key(st, a, b)
         if not resume:
             self._stop()
 
@@ -475,7 +551,9 @@ class MainWindow(QMainWindow):
             progress("Vorschau berechnen", 1)
             return r
 
-        def done(files):
+        def done(files, cached=False):
+            if not cached:
+                self._remember_preview(key, files)
             playing = bool(self.player) and self.player.playbackState() == QMediaPlayer.PlayingState
             pos = self.player.position() if (resume and self.player) else 0
             if resume and self._pending_load:  # previous swap still loading: carry its intent over
@@ -489,10 +567,43 @@ class MainWindow(QMainWindow):
             self._preview_stale = False
             self.lbl_prev.setText(f"Vorschau {fmt(a)} – {fmt(b)} · Leertaste = Play, Tab = A/B")
             self._set_busy(False)
-            self.statusBar().showMessage("Vorschau aktualisiert" if resume else f"Vorschau bereit ({b - a:.0f} s)")
+            msg = "Vorschau aktualisiert" if resume else f"Vorschau bereit ({b - a:.0f} s)"
+            self.statusBar().showMessage(msg + (" · aus dem Zwischenspeicher" if cached else ""))
             self._load_current(pos, play=playing or not resume)
 
+        hit = self._previews.get(key)
+        if hit and all(f.exists() for f in hit):  # computed before: switch instantly
+            self._previews.move_to_end(key)
+            done(hit, cached=True)
+            return
+        self._slot_seq += 1
+        slot = self._slot_seq
+
         self._run(job, done, "Aktualisiere Vorschau…" if resume else "Berechne Vorschau…", preview=True)
+
+    # ------------------------------------------------------------------ preview memory
+    def _preview_key(self, st, a: float, b: float) -> tuple:
+        proj = self.project
+        segs = tuple((s.start, s.end, s.kind, s.manual) for s in proj.segments)
+        return (str(proj.source), st.effective(), round(a, 3), round(b, 3), segs, proj.tone_ref)
+
+    def _remember_preview(self, key: tuple, files: tuple[Path, Path]) -> None:
+        self._previews[key] = files
+        self._previews.move_to_end(key)
+        while len(self._previews) > PREVIEW_KEEP:
+            _, old = self._previews.popitem(last=False)
+            in_use = set(self.files_ab or ())
+            for f in old:
+                if f not in in_use:
+                    f.unlink(missing_ok=True)
+
+    def _clear_preview_files(self) -> None:
+        """Forget all remembered previews and delete their files (also leftovers of earlier sessions)."""
+        self._previews.clear()
+        d = Path(tempfile.gettempdir()) / "klangrestaurator_preview"
+        for f in d.glob("*.wav") if d.exists() else ():
+            if f not in set(getattr(self, "files_ab", None) or ()):  # also called from __init__
+                f.unlink(missing_ok=True)
 
     def _ensure_player(self) -> QMediaPlayer | None:
         if self.player is None and not os.environ.get("KLANGRESTAURATOR_NO_AUDIO"):
@@ -675,6 +786,11 @@ class MainWindow(QMainWindow):
         if self._job:
             self._job.cancel()
         worker.wait_all()
+        if self.player:
+            self.player.stop()
+            self.player.setSource(QUrl())
+        self.files_ab = None
+        self._clear_preview_files()
         super().closeEvent(e)
 
 

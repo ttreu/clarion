@@ -97,15 +97,29 @@ def noise_profile(x: np.ndarray, levels_db: np.ndarray, t0: float, t1: float,
     return np.concatenate([np.asarray(x[i * frame:(i + 1) * frame]) for i in pick])
 
 
-def music_chain(x: np.ndarray, noise: np.ndarray, reduction: float, hp_hz: float) -> np.ndarray:
-    """Stationary spectral gating with a fine frequency resolution suited to instruments."""
+def hiss_cut(x: np.ndarray, db: float, f0: float = 8000.0) -> np.ndarray:
+    """Lower everything above ``f0`` by ``db`` (≤ 0) with a gentle, zero-phase shelf.
+
+    Instruments like the cello have little energy up there, the tape/mic hiss a lot.
+    """
+    if db >= 0:
+        return np.asarray(x, dtype=np.float32)
+    sos = ss.butter(2, f0, "hp", fs=SR, output="sos")
+    hi = ss.sosfiltfilt(sos, np.asarray(x), axis=0)
+    return (x - (1 - 10 ** (db / 20)) * hi).astype(np.float32)
+
+
+def music_chain(x: np.ndarray, noise: np.ndarray, reduction: float, hp_hz: float,
+                hiss_db: float = 0.0) -> np.ndarray:
+    """Stationary spectral gating with a fine frequency resolution suited to instruments, then the
+    optional hiss shelf (chosen by ear on 01.wav: 85 % + −6 dB above 8 kHz)."""
     import noisereduce as nr
 
     xh = highpass(x, hp_hz)
     if reduction <= 0:
-        return xh
+        return hiss_cut(xh, hiss_db)
     nh = highpass(noise, hp_hz)
     y = nr.reduce_noise(y=xh.T, sr=SR, y_noise=nh.T, stationary=True, prop_decrease=float(reduction),
                         n_fft=4096, n_std_thresh_stationary=1.5, freq_mask_smooth_hz=200,
                         time_mask_smooth_ms=100, n_jobs=1)
-    return np.asarray(y, dtype=np.float32).T[: len(x)]
+    return hiss_cut(np.asarray(y, dtype=np.float32).T[: len(x)], hiss_db)
