@@ -26,9 +26,10 @@ def _lufs(text: str) -> float | None:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="klangrestaurator-cli",
-                                 description="Cleans up field-recorder speech recordings and readings with "
-                                             "accompanying music: AI denoising for the voice, gentle noise "
-                                             "reduction for the music.")
+                                 description="Cleans up speech from field recorders and cameras, including "
+                                             "readings with accompanying music: AI denoising for the voice, "
+                                             "gentle noise reduction for the music. Videos: the first audio "
+                                             "track is used (needs ffmpeg).")
     ap.add_argument("input", type=Path, nargs="+")
     ap.add_argument("-o", "--output", type=Path, help="output file (only with a single input)")
     ap.add_argument("-p", "--preset", default=DEFAULT_PRESET, type=preset_name, choices=list(PRESETS))

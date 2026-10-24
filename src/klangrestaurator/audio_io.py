@@ -16,6 +16,9 @@ from scipy.signal import resample_poly
 from .settings import SR
 
 BLOCK_S = 60
+# files whose sound clarion takes from the first audio track (needs ffmpeg): camera and phone videos
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts", ".m2ts", ".avi", ".mkv", ".mxf", ".3gp"}
+AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".ogg", ".w64", ".caf", *VIDEO_EXT}
 
 
 def _ffmpeg() -> str | None:
@@ -23,7 +26,8 @@ def _ffmpeg() -> str | None:
 
 
 def probe(path: Path) -> tuple[int, int, float]:
-    """Return (samplerate, channels, duration_s). Falls back to ffmpeg for mp3/m4a."""
+    """Return (samplerate, channels, duration_s). Falls back to ffmpeg for mp3/m4a and videos
+    (first audio track; for videos the duration may be the container's, see ``load_to_memmap``)."""
     try:
         i = sf.info(str(path))
         return i.samplerate, i.channels, i.frames / i.samplerate
@@ -54,14 +58,15 @@ def load_to_memmap(path: Path, dest: Path, progress=None) -> np.memmap:
         native = True
     except Exception:
         native = False
-    if not native:  # decode compressed formats via ffmpeg into a temp wav first
+    if not native:  # compressed formats and videos: ffmpeg decodes the first audio track to a temp wav
         ff = _ffmpeg()
         if not ff:
             raise RuntimeError("This format needs ffmpeg (brew install ffmpeg).")
         tmp = dest.with_suffix(".decode.wav")
-        subprocess.run([ff, "-v", "error", "-y", "-i", str(path), "-ar", str(SR), "-c:a", "pcm_f32le", str(tmp)],
-                       check=True)
+        subprocess.run([ff, "-v", "error", "-y", "-i", str(path), "-map", "0:a:0", "-vn", "-ar", str(SR),
+                        "-c:a", "pcm_f32le", str(tmp)], check=True)
         path, sr_in = tmp, SR
+        dur = sf.info(str(tmp)).frames / SR    # the track itself: a video container can be longer
     n_out = int(round(dur * SR))
     mm = np.lib.format.open_memmap(dest, "w+", np.float32, (n_out, 2))
     pos = 0

@@ -75,7 +75,9 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 ## Layout
 
 - `src/klangrestaurator/settings.py` – `Settings` dataclass + `PRESETS` (Natural / Strong / Gentle; old German names map via `preset_name`)
-- `audio_io.py` – decode to 48 kHz memmap (soundfile; ffmpeg fallback for m4a etc.), blockwise WAV writer
+- `audio_io.py` – decode to 48 kHz memmap (soundfile; ffmpeg fallback for m4a etc. and videos: first audio
+  track only, length taken from the decoded track so the export stays in sync with the picture;
+  `AUDIO_EXT` / `VIDEO_EXT`), blockwise WAV writer
 - `dfn.py` – downloads/locates DeepFilterNet3 Rust binary (GitHub release v0.5.6), chunked `enhance()`
 - `analysis.py` – frame levels, `classify()`: speech/music, then `detect_mix()` (speech whose word gaps stay
   ≥ 6 dB above the noise floor in ≥ 40 % of ≥ 3 separate gaps per 8 s → MIX), `music_with_speech()` (music

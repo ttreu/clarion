@@ -1,10 +1,10 @@
 # clarion
 
-**Clean up speech recordings made with a field recorder – including readings with accompanying music.**
-A handheld recorder on the table or a stand captures a reading, a talk or an interview honestly, but
-also the recorder's hiss, the room's echo, the air conditioning and the PA loudspeaker. clarion cleans
-the voice with a speech AI and treats the music between and under the words gently, so a cello or a
-piano is not destroyed the way a normal noise remover would destroy it.
+**Clean up speech recorded with a field recorder or a camera – including readings with accompanying
+music.** A handheld recorder on the table or the microphone on a camera captures a reading, a talk or an
+interview honestly, but also the recorder's hiss, the room's echo, the air conditioning and the PA
+loudspeaker. clarion cleans the voice with a speech AI and treats the music between and under the words
+gently, so a cello or a piano is not destroyed the way a normal noise remover would destroy it.
 
 ![clarion main window](docs/screenshot.png)
 
@@ -14,6 +14,9 @@ piano is not destroyed the way a normal noise remover would destroy it.
   between the texts, sometimes also under the voice.
 - **Speech recordings in real rooms:** lectures, talks, sermons, panel discussions, interviews, oral
   history – recorded with a field recorder such as a Zoom or Tascam handheld, or with a phone.
+- **Camera sound:** the audio track of a video from a camera or phone (MOV, MP4, MTS, …). clarion reads
+  the first audio track and exports a WAV of exactly the same length and timing, so it lines up with the
+  picture again in your video editor.
 - **Long takes:** one continuous file of an hour or more, as it comes off the recorder (WAV, 16/24-bit
   or 32-bit float, any sample rate).
 
@@ -22,7 +25,7 @@ piano is not destroyed the way a normal noise remover would destroy it.
 Speech-enhancement AIs are excellent at removing noise and room sound from a voice, but they treat
 everything that is not speech as noise: a cello, a piano or applause gets wiped out or turns into
 watery artefacts. Classic noise reduction keeps the music, but cannot clean a voice nearly as well.
-With a field recorder both happen in the same file: the voice needs strong cleaning, the music needs a
+With a field recorder or a camera both happen in the same file: the voice needs strong cleaning, the music needs a
 light touch. clarion detects which parts of a recording are speech, music, or speech over music, and
 processes each part with the method that suits it – in one pass, with smooth transitions. It also
 evens out the voice when the speaker moves between the room and the PA microphone.
@@ -71,13 +74,18 @@ at any time.
 
 ## How to use
 
-1. Drop an audio file (WAV, AIFF, FLAC, MP3; M4A and others need [ffmpeg](https://ffmpeg.org)) on the window. The first analysis runs the AI over
-   the whole recording, which takes about a quarter of its duration; it is cached afterwards.
+1. Drop an audio file (WAV, AIFF, FLAC, MP3) or a video on the window. M4A and videos need
+   [ffmpeg](https://ffmpeg.org) (`brew install ffmpeg`). The first analysis runs the AI over the whole
+   recording, which takes about a quarter of its duration; it is cached afterwards.
 2. Check the sections – **speech** (blue), **music** (amber), **speech + music** (violet) – and correct
    them by dragging a boundary or with a right-click.
 3. Pick a preset or variants, click **Compute preview**, press **Space** to play and **Tab** to switch
    between A (original) and B (restored).
 4. **Export…**
+
+**Video:** export without trimming (no In/Out markers) and the WAV starts and ends exactly like the
+video's sound – place it at the start of the clip and mute the original track. With a trim, the WAV
+starts at the In marker instead.
 
 | Preset  | Speech                 | Music                | Speech + music   |
 |---------|------------------------|----------------------|------------------|

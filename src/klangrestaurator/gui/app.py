@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__, audio_io, project_file
 from ..analysis import MIX, MUSIC
+from ..audio_io import AUDIO_EXT
 from ..pipeline import Project, default_output_name
 from ..settings import SR, Settings
 from . import style, worker
@@ -37,8 +38,7 @@ from .listen_panel import PREVIEW_S, SKIP_MS, ListenPanel
 from .settings_panel import SettingsPanel
 from .timeline import Timeline, fmt
 
-AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".ogg", ".w64"}
-AUDIO_FILTER = "Audio (*.wav *.aif *.aiff *.flac *.mp3 *.m4a *.ogg *.w64)"
+AUDIO_FILTER = "Audio or video (" + " ".join(f"*{e}" for e in sorted(AUDIO_EXT)) + ")"
 PREVIEW_KEEP = 8      # remembered previews for instant switching between settings
 MAX_PREVIEW_S = 120   # longer selections are cut: previews must stay quick
 
@@ -278,8 +278,8 @@ class MainWindow(QMainWindow):
         start = self.prefs.value("last_dir", str(Path.home()))
         exts = AUDIO_FILTER[AUDIO_FILTER.index("(") + 1:-1]
         fn, _ = QFileDialog.getOpenFileName(
-            self, "Open audio file or project", start,
-            f"Audio or project ({exts} *.klang);;{APP_NAME} project (*.klang);;{AUDIO_FILTER}")
+            self, "Open audio, video or project", start,
+            f"Audio, video or project ({exts} *.klang);;{APP_NAME} project (*.klang);;{AUDIO_FILTER}")
         if not fn:
             return
         if Path(fn).suffix.lower() == project_file.SUFFIX:
@@ -560,8 +560,8 @@ class MainWindow(QMainWindow):
 
     def about(self):
         QMessageBox.about(self, APP_NAME,
-                          f"<b>{APP_NAME} {__version__}</b><p>Cleans up field-recorder speech recordings and "
-                          "readings with accompanying music. © 2026 Thomas Treu, MIT License.</p>"
+                          f"<b>{APP_NAME} {__version__}</b><p>Cleans up speech from field recorders and cameras, "
+                          "including readings with accompanying music. © 2026 Thomas Treu, MIT License.</p>"
                           "<p>Built on: <a href='https://github.com/Rikorose/DeepFilterNet'>DeepFilterNet</a> "
                           "(Schröter et al.; MIT/Apache-2.0), "
                           "<a href='https://github.com/timsainb/noisereduce'>noisereduce</a> (Sainburg; MIT), "
