@@ -25,6 +25,10 @@ class Settings:
 
     # --- segmentation -------------------------------------------------------
     crossfade_s: float = 0.5
+    """Crossfade music→speech, centred on the boundary."""
+    onset_fade_s: float = 0.04
+    """Crossfade speech→music. Short and ending exactly at the (5 ms precise) music onset, so the
+    music chain's noise floor arrives with the music instead of swelling in the silence before."""
     min_segment_s: float = 3.0
     music_ratio_db: float = -18.0
     """A frame counts as 'music' if the speech AI removes more than this many dB."""

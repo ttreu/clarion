@@ -147,8 +147,60 @@ def set_kind(segs: list[Segment], start: float, end: float, kind: str) -> list[S
     return out
 
 
-def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0) -> np.ndarray:
-    """Per-sample weight (1 = speech chain, 0 = music chain) for samples [start, start+n)."""
+def fine_onset(x: np.ndarray, t0: float, search_s: tuple[float, float] = (-0.2, 1.0),
+               hop_s: float = 0.005, rise_db: float = 12.0) -> float | None:
+    """Locate a music onset near ``t0`` (s) with 5 ms resolution.
+
+    The 0.25 s analysis frames only place a music start roughly (and deliberately early). This finds
+    the first point in the search window where the level jumps ``rise_db`` above the local floor after
+    at least 100 ms below it, and stays up for 30 ms. Returns None if there is no clear onset.
+    """
+    a = max(0, int((t0 + search_s[0]) * SR))
+    b = min(len(x), int((t0 + search_s[1]) * SR))
+    hop, win = int(hop_s * SR), int(2 * hop_s * SR)
+    if b - a < 40 * hop:
+        return None
+    mono = np.asarray(x[a:b], dtype=np.float32)
+    mono = mono.mean(axis=1) if mono.ndim == 2 else mono
+    n = (len(mono) - win) // hop
+    idx = np.arange(n)[:, None] * hop + np.arange(win)[None, :]
+    env = 10 * np.log10((mono[idx] ** 2).mean(axis=1) + 1e-12)
+    thr = np.percentile(env, 10) + rise_db
+    quiet, hold = int(0.1 / hop_s), int(0.03 / hop_s)
+    for i in range(quiet, n - hold):
+        if env[i] >= thr and np.all(env[i - quiet:i] < thr) and np.all(env[i:i + hold] >= thr - 3):
+            return (a + i * hop) / SR
+    return None
+
+
+def snap_music_onsets(segs: list[Segment], x: np.ndarray, pre_s: float = 0.025) -> list[Segment]:
+    """Move automatic speech→music boundaries to the exact onset (just before it) found in ``x``.
+
+    Manual boundaries are left alone. Returns a new list; the input is not modified.
+    """
+    out = [Segment(s.start, s.end, s.kind, s.manual) for s in segs]
+    for i in range(1, len(out)):
+        prev, seg = out[i - 1], out[i]
+        if seg.kind != MUSIC or prev.kind != SPEECH or seg.manual or prev.manual:
+            continue
+        on = fine_onset(x, seg.start)
+        if on is None:
+            continue
+        t = min(max(on - pre_s, prev.start + 0.5), seg.end - 0.5)
+        if t > prev.start and t < seg.end:
+            prev.end = seg.start = t
+    return out
+
+
+def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0,
+                onset_fade_s: float | None = None) -> np.ndarray:
+    """Per-sample weight (1 = speech chain, 0 = music chain) for samples [start, start+n).
+
+    Music→speech boundaries get a raised-cosine ramp of ``crossfade_s`` centred on the boundary.
+    With ``onset_fade_s``, speech→music boundaries instead get a short ramp that *ends* at the
+    boundary: the music chain (with its higher noise floor) then comes in together with the music,
+    which masks it, instead of the noise swelling audibly in the silence before.
+    """
     m = np.zeros(n, np.float32)
     for s in segs:
         if s.kind != SPEECH:
@@ -158,19 +210,25 @@ def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0)
         if b > a:
             m[a:b] = 1.0
     # replace each hard switch by a raised-cosine ramp centred on the boundary
-    L = int(crossfade_s * SR)
-    if L > 1:
-        ramp = (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, L))).astype(np.float32)
-        for prev, nxt in zip(segs, segs[1:], strict=False):
-            if prev.kind == nxt.kind:
-                continue
-            c = int(nxt.start * SR) - start
-            a, b = c - L // 2, c - L // 2 + L
-            if b <= 0 or a >= n:
-                continue
-            r = ramp if nxt.kind == SPEECH else 1 - ramp
-            lo, hi = max(0, a), min(n, b)
-            m[lo:hi] = r[lo - a:hi - a]
+    def ramp(L):
+        return (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, L))).astype(np.float32)
+
+    for prev, nxt in zip(segs, segs[1:], strict=False):
+        if prev.kind == nxt.kind:
+            continue
+        c = int(nxt.start * SR) - start
+        if nxt.kind == MUSIC and onset_fade_s is not None:
+            L = int(onset_fade_s * SR)
+            a = c - L
+        else:
+            L = int(crossfade_s * SR)
+            a = c - L // 2
+        b = a + L
+        if L <= 1 or b <= 0 or a >= n:
+            continue
+        r = ramp(L) if nxt.kind == SPEECH else 1 - ramp(L)
+        lo, hi = max(0, a), min(n, b)
+        m[lo:hi] = r[lo - a:hi - a]
     return m
 
 

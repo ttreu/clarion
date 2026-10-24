@@ -34,7 +34,10 @@ render(range, Settings):
                   link: one STFT gain per bin from both AI channels, applied to orig L+R
                   (deep-filter runs L/R independently → voice drifts L/R at high reduction)
    music  chain = HP(orig) + (noisereduce(orig, local noise profile) − HP(orig))
-   out = mask·speech + (1−mask)·music     mask = raised-cosine crossfade at segment boundaries
+   out = mask·speech + (1−mask)·music     mask = raised-cosine crossfade at segment boundaries:
+         music→speech 0.5 s centred; speech→music 40 ms ending at the onset, which render() snaps
+         to 5 ms precision (snap_music_onsets, auto boundaries only) so the music chain's higher
+         noise floor arrives with the music instead of swelling in the silence before it
 export: two-pass peak normalise to −1 dBFS, 24-bit WAV, optional resample to source rate
 ```
 

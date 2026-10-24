@@ -126,6 +126,14 @@ class Project:
             raise Cancelled()
 
     # ------------------------------------------------------------------ rendering
+    def _render_segments(self) -> list[analysis.Segment]:
+        """Segments with automatic music starts snapped to the exact onset (cached per segment list)."""
+        key = tuple((s.start, s.end, s.kind, s.manual) for s in self.segments)
+        if getattr(self, "_snap_key", None) != key:
+            self._snap_key = key
+            self._snapped = analysis.snap_music_onsets(self.segments, self.orig)
+        return self._snapped
+
     def render(self, settings: Settings, start_s: float = 0.0, end_s: float | None = None,
                progress: Progress = None, cancel: Cancel = None) -> np.ndarray:
         """Render [start_s, end_s) into a float32 array (memmap for long ranges)."""
@@ -142,14 +150,16 @@ class Project:
 
         blk, pad = BLOCK_S * SR, PAD_S * SR
         n_blocks = max(1, -(-n // blk))
-        music = [s for s in self.segments if s.kind == MUSIC and s.end * SR > A and s.start * SR < B]
+        segs = self._render_segments()
+        music = [s for s in segs if s.kind == MUSIC and s.end * SR > A and s.start * SR < B]
         steps = n_blocks + len(music)
         step = 0
         for s in range(A, B, blk):
             self._check(cancel)
             e = min(B, s + blk)
             ps, pe = max(0, s - pad), min(N, e + pad)
-            m = analysis.speech_mask(self.segments, e - s, settings.crossfade_s, start=s)[:, None]
+            m = analysis.speech_mask(segs, e - s, settings.crossfade_s, start=s,
+                                     onset_fade_s=settings.onset_fade_s)[:, None]
             o = np.asarray(self.orig[ps:pe])
             mu = chains.highpass(o, settings.music_highpass_hz)[s - ps:e - ps]
             if m.max() > 1e-3:
@@ -174,7 +184,8 @@ class Project:
             o = np.asarray(self.orig[pa:pb])
             x = chains.highpass(o, settings.music_highpass_hz)
             y = chains.music_chain(o, noise, settings.music_reduction, settings.music_highpass_hz)
-            w = 1 - analysis.speech_mask(self.segments, b - a, settings.crossfade_s, start=a)[:, None]
+            w = 1 - analysis.speech_mask(segs, b - a, settings.crossfade_s, start=a,
+                                         onset_fade_s=settings.onset_fade_s)[:, None]
             out[a - A:b - A] += w * (y[a - pa:b - pa] - x[a - pa:b - pa])
             step += 1
             p("Restaurieren", step / steps)
