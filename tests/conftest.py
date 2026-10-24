@@ -51,7 +51,11 @@ def no_dfn(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def isolated_cache(tmp_path_factory, monkeypatch):
-    """Keep test projects out of the real cache (~/Library/Caches/Klangrestaurator)."""
+    """Keep test projects and previews out of the real cache and temp folders."""
+    import tempfile
+
     from klangrestaurator import pipeline
     root = tmp_path_factory.mktemp("cache")
     monkeypatch.setattr(pipeline, "cache_root", lambda: root)
+    # previews go to tempfile.gettempdir(); keep tests away from the running app's preview files
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path_factory.mktemp("tmp")))
