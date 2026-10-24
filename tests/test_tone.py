@@ -1,8 +1,8 @@
 import numpy as np
 import scipy.signal as ss
 
-from klangrestaurator import tone
-from klangrestaurator.settings import SR
+from clarion import tone
+from clarion.settings import SR
 
 
 def _voice(seconds, seed=0):

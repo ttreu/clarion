@@ -8,4 +8,4 @@ if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 uv sync --quiet || { echo "Setup failed"; read -r; exit 1; }
-exec uv run klangrestaurator "$@"
+exec uv run clarion "$@"

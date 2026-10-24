@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from klangrestaurator import cli
-from klangrestaurator.settings import PRESETS
+from clarion import cli
+from clarion.settings import PRESETS
 
 
 def _settings(*args):

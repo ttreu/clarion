@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from klangrestaurator import audio_io
-from klangrestaurator.pipeline import Project
-from klangrestaurator.settings import PRESETS, SR
+from clarion import audio_io
+from clarion.pipeline import Project
+from clarion.settings import PRESETS, SR
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 

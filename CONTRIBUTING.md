@@ -22,13 +22,13 @@ You need macOS (Linux works for most things), [uv](https://docs.astral.sh/uv/) a
 ```bash
 git clone https://github.com/<you>/clarion.git   # your fork
 cd clarion
-uv sync                                         # creates .venv with all dependencies
-uv run klangrestaurator                         # start the app
-uv run klangrestaurator-cli --help              # command line
+uv sync                    # creates .venv with all dependencies
+uv run clarion             # start the app
+uv run clarion-cli --help  # command line
 ```
 
 The speech AI (`deep-filter`) is downloaded on first use. To use a local binary instead, set
-`KLANGRESTAURATOR_DEEPFILTER=/path/to/deep-filter`.
+`CLARION_DEEPFILTER=/path/to/deep-filter`.
 
 ## Tests and style
 

@@ -1,4 +1,4 @@
-"""Command line: `klangrestaurator-cli recording.wav --preset Natural`."""
+"""Command line: `clarion-cli recording.wav --preset Natural`."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ def _lufs(text: str) -> float | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="klangrestaurator-cli",
+    ap = argparse.ArgumentParser(prog="clarion-cli",
                                  description="Cleans up speech from field recorders and cameras, including "
                                              "readings with accompanying music: AI denoising for the voice, "
                                              "gentle noise reduction for the music. Videos: the first audio "

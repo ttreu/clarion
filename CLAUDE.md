@@ -1,7 +1,8 @@
-# CLAUDE.md – clarion (repo/package: klangrestaurator)
+# CLAUDE.md – clarion
 
-Mac desktop app **clarion** (always lowercase) (Python + PySide6; display name `APP_NAME` in `__init__.py`, internal names stay
-"klangrestaurator" so caches/prefs survive) for restoring recordings where **speech and music alternate**
+Mac desktop app **clarion** (always lowercase; Python + PySide6; package `clarion`, commands `clarion` / `clarion-cli`;
+called "Klangrestaurator" before 0.1.1 – `compat.py` moves old data folders, `gui.app._prefs` copies old settings,
+`project_file` still opens `.klang` projects) for restoring recordings where **speech and music alternate**
 (readings with cello, lectures with interludes). The user is German-speaking (talk to them in German); the app's UI text is English,
 code and comments are English.
 
@@ -9,16 +10,16 @@ code and comments are English.
 
 ```bash
 uv sync                                   # install (creates .venv)
-uv run klangrestaurator                   # GUI
-uv run klangrestaurator-cli FILE.wav      # CLI, see --help
+uv run clarion                   # GUI
+uv run clarion-cli FILE.wav      # CLI, see --help
 uv run pytest -q                          # tests (fast ones use a fake AI; one test runs the real binary)
 uv run pytest -q -m "not slow"            # offline
 uvx ruff check src tests                  # lint
 ./scripts/build_app.sh                    # PyInstaller → dist/clarion-<version>-macos-<arch>.zip
 ```
 
-Env vars: `KLANGRESTAURATOR_DEEPFILTER=/path/to/deep-filter` (use a local binary instead of downloading),
-`KLANGRESTAURATOR_NO_AUDIO=1` (skip QtMultimedia, e.g. headless/CI). GUI can be driven headless with
+Env vars: `CLARION_DEEPFILTER=/path/to/deep-filter` (use a local binary instead of downloading),
+`CLARION_NO_AUDIO=1` (skip QtMultimedia, e.g. headless/CI). GUI can be driven headless with
 `QT_QPA_PLATFORM=offscreen`.
 
 ## How it works (pipeline)
@@ -74,7 +75,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 
 ## Layout
 
-- `src/klangrestaurator/settings.py` – `Settings` dataclass + `PRESETS` (Natural / Strong / Gentle; old German names map via `preset_name`)
+- `src/clarion/settings.py` – `Settings` dataclass + `PRESETS` (Natural / Strong / Gentle; old German names map via `preset_name`)
 - `audio_io.py` – decode to 48 kHz memmap (soundfile; ffmpeg fallback for m4a etc. and videos: first audio
   track only, length taken from the decoded track so the export stays in sync with the picture;
   `AUDIO_EXT` / `VIDEO_EXT`), blockwise WAV writer
@@ -96,16 +97,16 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   judged locally (`voice_active`: within 15 dB of the 90th pct over ±10 s), not by a global threshold.
   Only frames inside SPEECH/MIX sections count (the faint AI residue in music lowered test file A's speech by 7–10 dB).
   Applied as one STFT EQ to the speech chain and the MIX voice part; music is untouched
-- `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
+- `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/clarion/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
-- `project_file.py` – `.klang` projects (JSON): source (absolute + relative), sections, trim, tone ref, all
+- `project_file.py` – `.clarion` projects (JSON; old `.klang` files still open): source (absolute + relative), sections, trim, tone ref, all
   Settings, GUI choices; opening one re-runs/uses the cached analysis, then applies the user's decisions
 - Icons: sources in `assets/icon/` (`make_icon.py` builds the mark and app icons; `clairon.icns` is the app
   bundle icon); runtime copies in `gui/assets/` (`clarion-icon.png` window icon, `clarion-mark.svg` header logo)
 - `gui/style.py` – dark studio theme (colours in `C`, stylesheet, palette) + vector transport icons; `gui/meter.py`
   – stereo level meter fed from the file being played (`_feed_meter`, last 40 ms before the play position)
 - `cli.py` – CLI: `build_parser()`, `settings_from_args()` (preset + overrides), `main()`
-- `gui/app.py` – `MainWindow`: header, timeline, the two panels, menus/shortcuts; opening audio and `.klang`
+- `gui/app.py` – `MainWindow`: header, timeline, the two panels, menus/shortcuts; opening audio and `.clarion`
   projects, analysis jobs, previews (+ the memory of the last 8), export
 - `gui/settings_panel.py` – `SettingsPanel`: Settings ↔ widgets (preset, Speech / Music / Speech + Music with
   variant drop-downs, Loudness with the live spectrum, Output); signals `changed` / `switched`

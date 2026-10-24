@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from . import compat
 from .settings import SR
 
 VERSION = "0.5.6"
@@ -40,16 +41,18 @@ def _target() -> str:
 
 
 def app_dir() -> Path:
+    """Where the deep-filter binary lives (~/Library/Application Support/clarion); the old folder moves here."""
     if sys.platform == "darwin":
-        d = Path.home() / "Library" / "Application Support" / "Klangrestaurator"
+        base, old = Path.home() / "Library" / "Application Support", compat.OLD_NAME
     else:
-        d = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "klangrestaurator"
+        base, old = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")), compat.OLD_NAME.lower()
+    d = compat.migrate_dir(base / "clarion", base / old)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def binary_path() -> Path:
-    env = os.environ.get("KLANGRESTAURATOR_DEEPFILTER")
+    env = compat.env("DEEPFILTER")
     if env:
         return Path(env)
     return app_dir() / "bin" / f"deep-filter-{VERSION}"

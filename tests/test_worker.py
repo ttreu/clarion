@@ -8,8 +8,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtCore = pytest.importorskip("PySide6.QtCore")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-from klangrestaurator.gui import worker  # noqa: E402
-from klangrestaurator.pipeline import Cancelled  # noqa: E402
+from clarion.gui import worker  # noqa: E402
+from clarion.pipeline import Cancelled  # noqa: E402
 
 
 @pytest.fixture(scope="module")

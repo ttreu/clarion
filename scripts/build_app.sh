@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 uv sync --extra build
-VERSION=$(uv run python -c "import klangrestaurator as k; print(k.__version__)")
+VERSION=$(uv run python -c "import clarion as k; print(k.__version__)")
 ARCH=$(uname -m)
 WORK="${TMPDIR:-/tmp}/clarion-build"
 rm -rf "$WORK"
@@ -16,7 +16,7 @@ uv run pyinstaller --noconfirm --windowed \
   --name clarion \
   --osx-bundle-identifier com.clarion.app \
   --icon "$ROOT/assets/icon/clairon.icns" \
-  --add-data "$ROOT/src/klangrestaurator/gui/assets:klangrestaurator/gui/assets" \
+  --add-data "$ROOT/src/clarion/gui/assets:clarion/gui/assets" \
   --distpath "$WORK/dist" --workpath "$WORK/build" --specpath "$WORK" \
   --collect-submodules noisereduce \
   --collect-submodules nara_wpe \

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from klangrestaurator.settings import SR
+from clarion.settings import SR
 
 
 def synth_reading(sr: int = 44_100, seed: int = 0) -> tuple[np.ndarray, list[tuple[float, float]]]:
@@ -44,7 +44,7 @@ def reading_file(tmp_path):
 
 @pytest.fixture
 def no_dfn(monkeypatch):
-    from klangrestaurator import dfn
+    from clarion import dfn
     monkeypatch.setattr(dfn, "enhance", fake_enhance)
     monkeypatch.setattr(dfn, "ensure_binary", lambda progress=None: None)
 
@@ -54,9 +54,17 @@ def isolated_cache(tmp_path_factory, monkeypatch):
     """Keep test projects and previews out of the real cache and temp folders."""
     import tempfile
 
-    from klangrestaurator import pipeline
+    from clarion import pipeline
     root = tmp_path_factory.mktemp("cache")
     monkeypatch.setattr(pipeline, "cache_root", lambda: root)
     # previews go to tempfile.gettempdir(); keep tests away from the running app's preview files
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path_factory.mktemp("tmp")))
-    monkeypatch.setenv("KLANGRESTAURATOR_NO_PROMPT", "1")       # no "save changes?" dialogs in tests
+    monkeypatch.setenv("CLARION_NO_PROMPT", "1")       # no "save changes?" dialogs in tests
+    # the app's settings go to a throw-away file, not to the user's real preferences
+    try:
+        from PySide6.QtCore import QSettings
+
+        from clarion.gui import app as gui_app
+    except ImportError:
+        return
+    monkeypatch.setattr(gui_app, "_prefs", lambda: QSettings(str(root / "prefs.ini"), QSettings.IniFormat))

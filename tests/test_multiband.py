@@ -2,10 +2,10 @@
 import numpy as np
 import soundfile as sf
 
-from klangrestaurator import dynamics
-from klangrestaurator import multiband as mb
-from klangrestaurator.pipeline import Project
-from klangrestaurator.settings import PRESETS, SR
+from clarion import dynamics
+from clarion import multiband as mb
+from clarion.pipeline import Project
+from clarion.settings import PRESETS, SR
 
 
 def _noise(seconds, level, seed=0):

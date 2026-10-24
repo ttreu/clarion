@@ -46,7 +46,7 @@ evens out the voice when the speaker moves between the room and the PA microphon
   ceiling for loud music, and an optional four-band "broadcast" compressor. Live spectrum and level meter.
 - **A/B preview** at any position, recomputed automatically when you change a setting, with instant
   switching between recent previews.
-- **Trim** start and end with In/Out markers, **projects** (`.klang`) that keep all markers and settings,
+- **Trim** start and end with In/Out markers, **projects** (`.clarion`) that keep all markers and settings,
   **export** as 24-bit WAV (48 kHz or the original sample rate).
 - Works on long files: one-hour recordings stay within a few GB of RAM.
 
@@ -86,7 +86,7 @@ Or in a terminal:
 
 ```bash
 uv sync
-uv run klangrestaurator
+uv run clarion
 ```
 
 To work on clarion itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -95,11 +95,15 @@ To work on clarion itself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - The speech AI: the `deep-filter` program from the
   [DeepFilterNet releases](https://github.com/Rikorose/DeepFilterNet/releases), stored in
-  `~/Library/Application Support/Klangrestaurator/`.
-- Analyses: `~/Library/Caches/Klangrestaurator/` (about twice the size of each recording). You can delete
-  this folder at any time; clarion recomputes what it needs.
+  `~/Library/Application Support/clarion/`.
+- Analyses: `~/Library/Caches/clarion/` (about twice the size of each recording). You can delete this
+  folder at any time; clarion recomputes what it needs.
+- Settings: `~/Library/Preferences/com.clarion.clarion.plist`.
 
-To uninstall, delete clarion.app and these two folders.
+To uninstall, delete clarion.app and these folders.
+
+clarion was called "Klangrestaurator" before version 0.1.1. On first start it moves the folders and
+settings of that name to the new places, and it still opens `.klang` projects (saving them as `.clarion`).
 
 ## How to use
 
@@ -125,11 +129,11 @@ starts at the In marker instead.
 ### Command line
 
 ```bash
-uv run klangrestaurator-cli recording.wav                       # preset Natural, −16 LUFS, 48 kHz
-uv run klangrestaurator-cli *.wav --preset Strong --keep-rate
-uv run klangrestaurator-cli recording.wav --broadcast --lufs -14
-uv run klangrestaurator-cli recording.wav --segments            # only list the detected sections
-uv run klangrestaurator-cli --help
+uv run clarion-cli recording.wav               # preset Natural, −16 LUFS, 48 kHz
+uv run clarion-cli *.wav --preset Strong --keep-rate
+uv run clarion-cli recording.wav --broadcast --lufs -14
+uv run clarion-cli recording.wav --segments    # only list the detected sections
+uv run clarion-cli --help
 ```
 
 ## How it works

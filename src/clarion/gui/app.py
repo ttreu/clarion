@@ -6,7 +6,6 @@ transport, meters); this file connects them to the project.
 """
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from collections import OrderedDict
@@ -28,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__, audio_io, project_file
+from .. import APP_NAME, __version__, audio_io, compat, project_file
 from ..analysis import MIX, MUSIC
 from ..audio_io import AUDIO_EXT
 from ..pipeline import Project, default_output_name
@@ -41,6 +40,28 @@ from .timeline import Timeline, fmt
 AUDIO_FILTER = "Audio or video (" + " ".join(f"*{e}" for e in sorted(AUDIO_EXT)) + ")"
 PREVIEW_KEEP = 8      # remembered previews for instant switching between settings
 MAX_PREVIEW_S = 120   # longer selections are cut: previews must stay quick
+PROJECT_GLOB = " ".join(f"*{s}" for s in project_file.SUFFIXES)
+
+
+def take_over_settings(new: QSettings, old: QSettings) -> bool:
+    """Copy ``old`` into ``new`` if ``new`` is still empty; True if something was copied.
+
+    Fallbacks are switched off: on macOS a fresh QSettings otherwise reports the system's global
+    preferences (dozens of keys), looks non-empty, and those keys would be copied too."""
+    new.setFallbacksEnabled(False)
+    old.setFallbacksEnabled(False)
+    if new.allKeys() or not old.allKeys():
+        return False
+    for k in old.allKeys():
+        new.setValue(k, old.value(k))
+    new.sync()
+    return True
+
+
+def _prefs() -> QSettings:
+    """The app's settings; the first time, the values saved under the old name are taken over."""
+    take_over_settings(QSettings("clarion", "clarion"), QSettings(compat.OLD_NAME, compat.OLD_NAME))
+    return QSettings("clarion", "clarion")
 
 
 class MainWindow(QMainWindow):
@@ -49,9 +70,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1100, 640)
         self.setAcceptDrops(True)
-        self.prefs = QSettings("Klangrestaurator", "Klangrestaurator")
+        self.prefs = _prefs()
         self.project: Project | None = None
-        self._project_path: Path | None = None   # the .klang file, once saved / opened
+        self._project_path: Path | None = None   # the project file, once saved / opened
         self._dirty = False                       # unsaved decisions (sections, cut, settings …)
         self._pending_project: project_file.Loaded | None = None   # applied when its analysis is done
         self._job = None
@@ -270,7 +291,7 @@ class MainWindow(QMainWindow):
     def dropEvent(self, e):
         for u in e.mimeData().urls():
             p = Path(u.toLocalFile())
-            if p.suffix.lower() == project_file.SUFFIX:
+            if p.suffix.lower() in project_file.SUFFIXES:
                 self.open_project(p)
                 return
             if p.suffix.lower() in AUDIO_EXT:
@@ -282,10 +303,10 @@ class MainWindow(QMainWindow):
         exts = AUDIO_FILTER[AUDIO_FILTER.index("(") + 1:-1]
         fn, _ = QFileDialog.getOpenFileName(
             self, "Open audio, video or project", start,
-            f"Audio, video or project ({exts} *.klang);;{APP_NAME} project (*.klang);;{AUDIO_FILTER}")
+            f"Audio, video or project ({exts} {PROJECT_GLOB});;{APP_NAME} project ({PROJECT_GLOB});;{AUDIO_FILTER}")
         if not fn:
             return
-        if Path(fn).suffix.lower() == project_file.SUFFIX:
+        if Path(fn).suffix.lower() in project_file.SUFFIXES:
             self.open_project(Path(fn))
         else:
             self.open_audio(Path(fn))
@@ -381,8 +402,9 @@ class MainWindow(QMainWindow):
             return False
         path = self._project_path
         if ask or path is None:
-            default = path or self.project.source.with_suffix(project_file.SUFFIX)
-            fn, _ = QFileDialog.getSaveFileName(self, "Save project", str(default), f"{APP_NAME} project (*.klang)")
+            default = (path or self.project.source).with_suffix(project_file.SUFFIX)
+            fn, _ = QFileDialog.getSaveFileName(self, "Save project", str(default),
+                                                f"{APP_NAME} project (*{project_file.SUFFIX})")
             if not fn:
                 return False
             path = Path(fn)
@@ -402,7 +424,7 @@ class MainWindow(QMainWindow):
 
     def _confirm_discard(self) -> bool:
         """True if it is fine to drop the current project (saved, discarded, or nothing to lose)."""
-        if not self._dirty or os.environ.get("KLANGRESTAURATOR_NO_PROMPT"):
+        if not self._dirty or compat.env("NO_PROMPT"):
             return True
         r = QMessageBox.question(self, "Unsaved changes", "The project has unsaved changes. Save now?",
                                  QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
@@ -540,7 +562,7 @@ class MainWindow(QMainWindow):
     def _clear_preview_files(self) -> None:
         """Forget all remembered previews and delete their files (also leftovers of earlier sessions)."""
         self._previews.clear()
-        d = Path(tempfile.gettempdir()) / "klangrestaurator_preview"
+        d = Path(tempfile.gettempdir()) / "clarion_preview"
         in_use = set(self.listen.files_ab or ()) if hasattr(self, "listen") else set()
         for f in d.glob("*.wav") if d.exists() else ():
             if f not in in_use:

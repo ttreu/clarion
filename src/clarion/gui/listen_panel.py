@@ -7,7 +7,6 @@ the same position, looping, and feeding the level meter and spectrum.
 """
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .. import compat
 from ..settings import SR
 from . import style
 from .meter import LevelMeter
@@ -211,7 +211,7 @@ class ListenPanel(QGroupBox):
 
     # ------------------------------------------------------------------ player
     def _ensure_player(self) -> QMediaPlayer | None:
-        if self.player is None and not os.environ.get("KLANGRESTAURATOR_NO_AUDIO"):
+        if self.player is None and not compat.env("NO_AUDIO"):
             self.out = QAudioOutput(self)
             self.player = QMediaPlayer(self)
             self.player.setAudioOutput(self.out)

@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from klangrestaurator import audio_io
-from klangrestaurator.analysis import MUSIC
-from klangrestaurator.pipeline import Project
-from klangrestaurator.settings import PRESETS, SR
+from clarion import audio_io
+from clarion.analysis import MUSIC
+from clarion.pipeline import Project
+from clarion.settings import PRESETS, SR
 
 
 def test_load_resamples_to_48k_stereo(tmp_path):
@@ -32,7 +32,7 @@ def test_end_to_end_with_fake_ai(reading_file, tmp_path, no_dfn):
     assert sr == SR and sf.info(out).subtype == "PCM_24"
     assert len(y) == 30 * SR
     assert np.isfinite(y).all()
-    from klangrestaurator import dynamics
+    from clarion import dynamics
     assert abs(dynamics.loudness(y) - PRESETS["Natural"].loudness_target) < 1.0   # default: LUFS target
     assert 20 * np.log10(np.abs(y).max()) <= -1.0 + 1e-3
     out = proj.export(PRESETS["Natural"].with_(loudness_target=None), tmp_path / "peak.wav")
@@ -57,7 +57,7 @@ def test_preview_and_keep_rate(reading_file, tmp_path, no_dfn):
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(not (os.environ.get("KLANGRESTAURATOR_DEEPFILTER") or shutil.which("curl")),
+@pytest.mark.skipif(not (os.environ.get("CLARION_DEEPFILTER") or shutil.which("curl")),
                     reason="needs deep-filter binary or network")
 def test_real_deepfilternet(reading_file, tmp_path):
     src, _ = reading_file
@@ -68,7 +68,7 @@ def test_real_deepfilternet(reading_file, tmp_path):
 
 
 def test_mix_segment_is_voice_plus_share_of_music(reading_file, no_dfn):
-    from klangrestaurator.analysis import MIX, SPEECH
+    from clarion.analysis import MIX, SPEECH
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
@@ -89,7 +89,7 @@ def test_mix_segment_is_voice_plus_share_of_music(reading_file, no_dfn):
 
 
 def test_adjacent_music_and_mix_are_not_denoised_twice(reading_file, no_dfn):
-    from klangrestaurator.analysis import MIX
+    from clarion.analysis import MIX
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
@@ -101,7 +101,7 @@ def test_adjacent_music_and_mix_are_not_denoised_twice(reading_file, no_dfn):
 
 
 def test_export_hits_loudness_target_under_limiter(reading_file, no_dfn, tmp_path):
-    from klangrestaurator import dynamics
+    from clarion import dynamics
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
@@ -116,7 +116,7 @@ def test_export_hits_loudness_target_under_limiter(reading_file, no_dfn, tmp_pat
 
 
 def test_normalize_switch_off_restores_old_behaviour(reading_file, no_dfn, tmp_path):
-    from klangrestaurator import dynamics
+    from clarion import dynamics
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
@@ -155,7 +155,7 @@ def test_loud_music_is_capped_above_the_loudness_target(tmp_path, no_dfn):
     its level."""
     from conftest import synth_reading
 
-    from klangrestaurator import dynamics
+    from clarion import dynamics
     x, _ = synth_reading()                                     # speech 0–10, music 10–20, speech 20–30
     sr = 44100
     x[10 * sr:20 * sr] *= 4.0                                  # the music is much louder

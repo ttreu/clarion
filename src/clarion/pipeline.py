@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage
 
-from . import analysis, audio_io, chains, dfn, dynamics, multiband, tone
+from . import analysis, audio_io, chains, compat, dfn, dynamics, multiband, tone
 from .analysis import MIX, MUSIC, SPEECH, Segment
 from .settings import SR, Settings
 
@@ -28,10 +28,12 @@ class Cancelled(Exception):
 
 
 def cache_root() -> Path:
+    """Analyses of each source file (~/Library/Caches/clarion); the folder of the old name is moved here."""
     if sys.platform == "darwin":
-        d = Path.home() / "Library" / "Caches" / "Klangrestaurator"
+        base, old = Path.home() / "Library" / "Caches", compat.OLD_NAME
     else:
-        d = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "klangrestaurator"
+        base, old = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")), compat.OLD_NAME.lower()
+    d = compat.migrate_dir(base / "clarion", base / old)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -460,7 +462,7 @@ class Project:
         while the next one is written.
         """
         settings = settings.effective()
-        tmp = Path(tempfile.gettempdir()) / "klangrestaurator_preview"
+        tmp = Path(tempfile.gettempdir()) / "clarion_preview"
         tmp.mkdir(exist_ok=True)
         a, b = int(start_s * SR), int(min(self.duration, end_s) * SR)
         tag = f"_{slot}" if slot else ""

@@ -2,8 +2,8 @@ import numpy as np
 import scipy.signal as ss
 import soundfile as sf
 
-from klangrestaurator import audio_io, dynamics
-from klangrestaurator.settings import SR
+from clarion import audio_io, dynamics
+from clarion.settings import SR
 
 
 def _sine(f, amp, seconds, ch=2):

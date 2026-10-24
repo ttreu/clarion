@@ -8,10 +8,10 @@ import sys
 multiprocessing.freeze_support()
 
 if len(sys.argv) > 1 and sys.argv[1] == "--cli":
-    from klangrestaurator.cli import main as cli_main
+    from clarion.cli import main as cli_main
 
     raise SystemExit(cli_main(sys.argv[2:]))
 
-from klangrestaurator.gui.app import main  # noqa: E402
+from clarion.gui.app import main  # noqa: E402
 
 raise SystemExit(main())

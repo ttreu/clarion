@@ -1,7 +1,7 @@
 import numpy as np
 
-from klangrestaurator import chains
-from klangrestaurator.settings import SR
+from clarion import chains
+from clarion.settings import SR
 
 
 def _balance_db(x, frame=SR // 20):

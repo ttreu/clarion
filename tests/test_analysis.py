@@ -1,7 +1,7 @@
 import numpy as np
 
-from klangrestaurator.analysis import MUSIC, SPEECH, Segment, classify, set_kind, speech_mask
-from klangrestaurator.settings import SR, Settings
+from clarion.analysis import MUSIC, SPEECH, Segment, classify, set_kind, speech_mask
+from clarion.settings import SR, Settings
 
 
 def _levels(music_ranges, total_s=60, speech_db=-28, music_db=-20, removed_music=-40, removed_speech=-4):
@@ -65,7 +65,7 @@ def _hiss_then_tone(onset_s=2.37, total_s=4.0, seed=3):
 
 
 def test_fine_onset_finds_tone_start_to_10ms():
-    from klangrestaurator.analysis import fine_onset
+    from clarion.analysis import fine_onset
     x = _hiss_then_tone(2.37)
     on = fine_onset(x, 2.0)  # coarse start ~0.4 s early, like classify()/_refine produce
     assert on is not None and abs(on - 2.37) < 0.01
@@ -73,7 +73,7 @@ def test_fine_onset_finds_tone_start_to_10ms():
 
 
 def test_snap_moves_auto_boundary_but_not_manual():
-    from klangrestaurator.analysis import snap_music_onsets
+    from clarion.analysis import snap_music_onsets
     x = _hiss_then_tone(2.37)
     segs = [Segment(0, 2.0, SPEECH), Segment(2.0, 4.0, MUSIC)]
     out = snap_music_onsets(segs, x)
@@ -92,7 +92,7 @@ def test_onset_fade_ends_at_music_start():
 
 
 def test_detect_mix_marks_speech_with_music_in_the_gaps():
-    from klangrestaurator.analysis import MIX, detect_mix
+    from clarion.analysis import MIX, detect_mix
     n = 60 * 4
     orig = np.full(n, -28.0)
     enh = orig - 4
@@ -111,7 +111,7 @@ def test_detect_mix_marks_speech_with_music_in_the_gaps():
 
 
 def test_music_with_speech_becomes_mix():
-    from klangrestaurator.analysis import MIX, music_with_speech
+    from clarion.analysis import MIX, music_with_speech
     n = 40 * 4
     orig = np.full(n, -25.0)
     enh = orig - 40                           # pure music: the AI removes 40 dB everywhere
@@ -124,7 +124,7 @@ def test_music_with_speech_becomes_mix():
 
 
 def test_merge_short_avoids_rapid_switching():
-    from klangrestaurator.analysis import MIX, merge_short
+    from clarion.analysis import MIX, merge_short
     segs = [Segment(0, 10, SPEECH), Segment(10, 12, MIX), Segment(12, 20, SPEECH),
             Segment(20, 24, MUSIC), Segment(24, 30, MIX), Segment(30, 40, SPEECH)]
     out = merge_short(segs, 6.0)
@@ -136,7 +136,7 @@ def test_merge_short_avoids_rapid_switching():
 
 
 def test_move_boundary_marks_both_sides_manual_and_clamps():
-    from klangrestaurator.analysis import MIX, move_boundary
+    from clarion.analysis import MIX, move_boundary
     segs = [Segment(0, 10, SPEECH), Segment(10, 20, MIX), Segment(20, 30, SPEECH)]
     out = move_boundary(segs, 10, 12.5)
     assert [(s.start, s.end, s.kind, s.manual) for s in out] == [

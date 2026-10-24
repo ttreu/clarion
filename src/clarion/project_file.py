@@ -1,4 +1,5 @@
-"""Project files (.klang): source file, sections with corrections, cut, tone reference and settings.
+"""Project files (.clarion; before 0.1.1: .klang): source file, sections with corrections, cut, tone
+reference and settings.
 
 The heavy analysis stays in the cache (keyed by the source file); a project file only holds what the
 user decided, so it is small, human-readable JSON and survives a cleared cache.
@@ -13,8 +14,10 @@ from pathlib import Path
 from .analysis import Segment
 from .settings import Settings
 
-SUFFIX = ".klang"
-FORMAT = "klangrestaurator-projekt"
+SUFFIX = ".clarion"
+SUFFIXES = (SUFFIX, ".klang")          # .klang: projects saved before the rename (still opened)
+FORMAT = "clarion-project"
+_FORMATS = {FORMAT, "klangrestaurator-projekt"}
 VERSION = 1
 
 
@@ -73,7 +76,7 @@ class Loaded:
 def load(path: Path) -> Loaded:
     path = Path(path)
     data = json.loads(path.read_text())
-    if data.get("format") != FORMAT:
+    if data.get("format") not in _FORMATS:
         raise ValueError(f"{path.name} is not a project file of this app")
     if int(data.get("version", 0)) > VERSION:
         raise ValueError(f"{path.name} was written by a newer version")

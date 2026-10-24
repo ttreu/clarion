@@ -9,8 +9,8 @@ QtCore = pytest.importorskip("PySide6.QtCore")
 QtGui = pytest.importorskip("PySide6.QtGui")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-from klangrestaurator.analysis import MIX, SPEECH, Segment  # noqa: E402
-from klangrestaurator.gui.timeline import Timeline  # noqa: E402
+from clarion.analysis import MIX, SPEECH, Segment  # noqa: E402
+from clarion.gui.timeline import Timeline  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -49,8 +49,8 @@ def test_drag_boundary_emits_move_and_keeps_project_list(app):
 
 
 def test_loudness_checkbox_disables_controls(app, monkeypatch):
-    monkeypatch.setenv("KLANGRESTAURATOR_NO_AUDIO", "1")
-    from klangrestaurator.gui.app import MainWindow
+    monkeypatch.setenv("CLARION_NO_AUDIO", "1")
+    from clarion.gui.app import MainWindow
     w = MainWindow()
     try:
         was = w.panel.chk_norm.isChecked()
@@ -68,9 +68,9 @@ def test_previews_are_remembered_and_reused(app, monkeypatch, tmp_path, reading_
     """Switching back to an already computed setting must not compute again."""
     import time
 
-    monkeypatch.setenv("KLANGRESTAURATOR_NO_AUDIO", "1")
-    from klangrestaurator import pipeline
-    from klangrestaurator.gui.app import MainWindow
+    monkeypatch.setenv("CLARION_NO_AUDIO", "1")
+    from clarion import pipeline
+    from clarion.gui.app import MainWindow
     calls = []
     orig = pipeline.Project.write_preview
     monkeypatch.setattr(pipeline.Project, "write_preview",
@@ -107,8 +107,8 @@ def test_previews_are_remembered_and_reused(app, monkeypatch, tmp_path, reading_
 def test_original_plays_before_preview_and_trim_keys(app, monkeypatch, reading_file, no_dfn):
     import time
 
-    monkeypatch.setenv("KLANGRESTAURATOR_NO_AUDIO", "1")
-    from klangrestaurator.gui.app import MainWindow
+    monkeypatch.setenv("CLARION_NO_AUDIO", "1")
+    from clarion.gui.app import MainWindow
     w = MainWindow()
 
     def pump(cond, limit=30):
@@ -222,8 +222,8 @@ def test_trackpad_axis_lock_and_gentle_zoom(app):
 def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_file, no_dfn, tmp_path):
     import time
 
-    monkeypatch.setenv("KLANGRESTAURATOR_NO_AUDIO", "1")
-    from klangrestaurator.gui.app import MainWindow
+    monkeypatch.setenv("CLARION_NO_AUDIO", "1")
+    from clarion.gui.app import MainWindow
 
     def pump(w, cond, limit=30):
         t = time.time()
@@ -242,7 +242,7 @@ def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_f
         w.panel.cmb_v_music.activated.emit(4)                 # music variant E
         w.panel.sl_tone.setValue(40)
         assert w._dirty and w.windowTitle().endswith("•")
-        proj = tmp_path / "test.klang"
+        proj = tmp_path / "test.clarion"
         monkeypatch.setattr(w, "_project_path", proj)   # avoid the save dialog
         assert w.save_project()
         assert not w._dirty and proj.exists()
@@ -258,14 +258,14 @@ def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_f
         assert w2.project.trim == (1.0, 25.0) and w2.project.tone_ref == (20.0, 24.0)
         assert w2.settings() == expected[1]
         assert w2.panel.cmb_v_music.currentText().startswith("E")
-        assert not w2._dirty and "test.klang" in w2.windowTitle()
+        assert not w2._dirty and "test.clarion" in w2.windowTitle()
     finally:
         w2.close()
 
 
 def test_waveform_overview_and_columns(app):
-    from klangrestaurator.analysis import WAVE_HOP, waveform_overview
-    from klangrestaurator.settings import SR
+    from clarion.analysis import WAVE_HOP, waveform_overview
+    from clarion.settings import SR
 
     t = np.arange(10 * SR) / SR
     x = np.stack([0.5 * np.sin(2 * np.pi * 220 * t)] * 2, axis=1).astype(np.float32)
