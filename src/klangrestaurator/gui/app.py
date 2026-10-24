@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         self._syncing = False
 
         g_sp = QGroupBox("SPEECH")
+        g_sp.setObjectName("speech")   # timeline colour accents (style.py)
         f = QFormLayout(g_sp)
         self.cmb_v_speech = self._variant_box(SPEECH_VARIANTS)
         f.addRow("Variant", self.cmb_v_speech)
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
         left.addWidget(g_sp)
 
         g_mu = QGroupBox("MUSIC")
+        g_mu.setObjectName("music")   # timeline colour accents (style.py)
         f = QFormLayout(g_mu)
         self.cmb_v_music = self._variant_box(MUSIC_VARIANTS)
         f.addRow("Variant", self.cmb_v_music)
@@ -212,6 +214,7 @@ class MainWindow(QMainWindow):
         left.addWidget(g_mu)
 
         g_mix = QGroupBox("SPEECH + MUSIC")
+        g_mix.setObjectName("mix")   # timeline colour accents (style.py)
         f = QFormLayout(g_mix)
         self.cmb_v_mix = self._variant_box(MIX_VARIANTS)
         f.addRow("Variant", self.cmb_v_mix)
@@ -273,6 +276,21 @@ class MainWindow(QMainWindow):
         t = QGroupBox("LISTEN")
         tv = QVBoxLayout(t)
         tv.setSpacing(10)
+        # first step of the listening workflow, so it sits on top and stands out
+        self.btn_preview = QPushButton("  Compute preview")
+        self.btn_preview.setObjectName("preview")
+        self.btn_preview.setIcon(style.icon("headphones", style.C.accent_hi, 20))
+        self.btn_preview.setIconSize(QSize(20, 20))
+        self.btn_preview.setCursor(Qt.PointingHandCursor)
+        self.btn_preview.setToolTip(f"Restores {int(PREVIEW_S)} s from the cursor, or the selection, "
+                                    "so you can compare A (original) and B (restored).")
+        self.btn_preview.clicked.connect(self.make_preview)
+        tv.addWidget(self.btn_preview)
+        self.lbl_prev = QLabel(f"{int(PREVIEW_S)} s from the cursor, or the selection")
+        self.lbl_prev.setObjectName("muted")
+        self.lbl_prev.setWordWrap(True)
+        tv.addWidget(self.lbl_prev)
+        tv.addSpacing(4)
         ab = QHBoxLayout()
         self.rb_a = QRadioButton("A  Original")
         self.rb_b = QRadioButton("B  Restored")
@@ -291,13 +309,6 @@ class MainWindow(QMainWindow):
         tv.addLayout(self._transport())
         self.meter = LevelMeter()
         tv.addWidget(self.meter)
-        self.btn_preview = QPushButton(f"Compute preview  ·  {int(PREVIEW_S)} s from cursor / selection")
-        self.btn_preview.clicked.connect(self.make_preview)
-        tv.addWidget(self.btn_preview)
-        self.lbl_prev = QLabel("")
-        self.lbl_prev.setObjectName("muted")
-        self.lbl_prev.setWordWrap(True)
-        tv.addWidget(self.lbl_prev)
         tv.addStretch(1)
         mid.addWidget(t, 2)
 

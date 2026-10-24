@@ -63,6 +63,14 @@ QPushButton#primary {{ background: {C.accent}; border-color: {C.accent}; color: 
 QPushButton#primary:hover {{ background: {C.accent_hi}; }}
 QPushButton#primary:disabled {{ background: {C.card_hi}; border-color: {C.line}; color: {C.faint}; }}
 
+QPushButton#preview {{
+    background: #3a3020; border: 1px solid {C.accent}; border-radius: 9px; padding: 10px 16px;
+    color: {C.accent_hi}; font-size: 14px; font-weight: 600;
+}}
+QPushButton#preview:hover {{ background: #4a3b22; border-color: {C.accent_hi}; }}
+QPushButton#preview:pressed {{ background: #2e2618; }}
+QPushButton#preview:disabled {{ background: {C.card_hi}; border-color: {C.line}; color: {C.faint}; }}
+
 QToolButton {{
     background: {C.card_hi}; border: 1px solid {C.line}; border-radius: 8px; padding: 6px;
 }}
@@ -122,6 +130,19 @@ QMenuBar {{ background: {C.card}; }}
 QMenu {{ background: {C.card_hi}; border: 1px solid {C.line}; }}
 QMenu::item:selected {{ background: {C.accent}; color: #1b1406; }}
 QScrollBar {{ background: transparent; }}
+"""
+
+# the three section groups in the control panel carry their timeline colour: title, a stripe on the
+# left, sliders and checkboxes (objectName "speech" / "music" / "mix")
+for _name, _col in (("speech", C.speech), ("music", C.music), ("mix", C.mix)):
+    STYLESHEET += f"""
+QGroupBox#{_name} {{ border-left: 3px solid {_col}; }}
+QGroupBox#{_name}::title {{ color: {_col}; }}
+QGroupBox#{_name} QSlider::sub-page:horizontal {{ background: {_col}; }}
+QGroupBox#{_name} QSlider::handle:horizontal:hover {{ background: {_col}; }}
+QGroupBox#{_name} QCheckBox::indicator:checked {{ background: {_col}; border-color: {_col}; }}
+QGroupBox#{_name} QComboBox:hover, QGroupBox#{_name} QComboBox:focus {{ border-color: {_col}; }}
+QGroupBox#{_name} QComboBox QAbstractItemView {{ selection-background-color: {_col}; }}
 """
 
 
@@ -184,6 +205,14 @@ def icon(kind: str, color: str = C.text, size: int = 18) -> QIcon:
     elif kind == "fwd":
         tri(s * 0.14, s * 0.52)
         tri(s * 0.52, s * 0.9)
+    elif kind == "headphones":
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(col, s * 0.1, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(s * 0.16, s * 0.14, s * 0.68, s * 0.7), 0, 180 * 16)        # head band
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        p.drawRoundedRect(QRectF(s * 0.1, s * 0.48, s * 0.22, s * 0.36), s * 0.08, s * 0.08)   # ear cups
+        p.drawRoundedRect(QRectF(s * 0.68, s * 0.48, s * 0.22, s * 0.36), s * 0.08, s * 0.08)
     elif kind == "loop":
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(col, s * 0.1, Qt.SolidLine, Qt.RoundCap))
