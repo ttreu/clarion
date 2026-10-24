@@ -15,6 +15,8 @@ class Settings:
     speech_dereverb: bool = False
     """Additional classic dereverberation (WPE) on speech. Slow, adds dryness."""
     speech_highpass_hz: float = 70.0
+    speech_stereo_link: bool = True
+    """Apply the AI's suppression with one gain for both channels (stops the voice drifting L/R)."""
 
     # --- music chain --------------------------------------------------------
     music_reduction: float = 0.70

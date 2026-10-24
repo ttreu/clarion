@@ -30,7 +30,9 @@ source file ──decode/resample──▶ orig.npy (48 kHz f32 stereo memmap)
 levels (0.25 s dB) of orig & enh ─▶ classify(): ratio enh-orig < −18 dB on active frames
                                    ⇒ "music" (the speech AI wipes it) ⇒ segments.json
 render(range, Settings):
-   speech chain = HP(enh) + 10^(−dB/20)·HP(orig)  [+ WPE dereverb]
+   speech chain = HP(link(enh)) + 10^(−dB/20)·HP(orig)  [+ WPE dereverb]
+                  link: one STFT gain per bin from both AI channels, applied to orig L+R
+                  (deep-filter runs L/R independently → voice drifts L/R at high reduction)
    music  chain = HP(orig) + (noisereduce(orig, local noise profile) − HP(orig))
    out = mask·speech + (1−mask)·music     mask = raised-cosine crossfade at segment boundaries
 export: two-pass peak normalise to −1 dBFS, 24-bit WAV, optional resample to source rate

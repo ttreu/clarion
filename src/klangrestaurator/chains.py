@@ -16,9 +16,34 @@ def highpass(x: np.ndarray, fc: float) -> np.ndarray:
 
 # --- speech ----------------------------------------------------------------------
 
+def stereo_link(orig: np.ndarray, enhanced: np.ndarray, n_fft: int = 1024, max_gain: float = 1.5) -> np.ndarray:
+    """Re-apply the AI's noise suppression with one gain shared by both channels.
+
+    deep-filter treats left and right independently, so each channel gets its own time-varying
+    attenuation and the voice drifts left/right once little original is mixed back. Here the gain per
+    time-frequency bin is taken from the summed power of both AI channels and applied equally to the
+    original L and R, which keeps the original stereo image.
+    """
+    x = np.asarray(orig, dtype=np.float32)
+    if x.ndim != 2 or x.shape[1] < 2 or len(x) < n_fft:
+        return np.asarray(enhanced, dtype=np.float32)
+    kw = dict(fs=SR, window="hann", nperseg=n_fft, noverlap=n_fft * 3 // 4, axis=0)
+    _, _, X = ss.stft(x, **kw)                                    # (freq, ch, frames)
+    _, _, E = ss.stft(np.asarray(enhanced, dtype=np.float32), **kw)
+    px = (np.abs(X) ** 2).sum(axis=1, keepdims=True)
+    pe = (np.abs(E) ** 2).sum(axis=1, keepdims=True)
+    g = np.minimum(np.sqrt(pe / (px + 1e-12)), max_gain)
+    _, y = ss.istft(X * g, fs=SR, window="hann", nperseg=n_fft, noverlap=n_fft * 3 // 4,
+                    time_axis=-1, freq_axis=0)
+    y = np.asarray(y).T if np.asarray(y).shape[0] == x.shape[1] else np.asarray(y)
+    return y[: len(x)].astype(np.float32)
+
+
 def speech_chain(orig: np.ndarray, enhanced: np.ndarray, reduction_db: float, hp_hz: float,
-                 dereverb: bool) -> np.ndarray:
+                 dereverb: bool, stereo_linked: bool = True) -> np.ndarray:
     """Blend AI output with a little original (keeps it natural), high-pass, optional WPE."""
+    if stereo_linked:
+        enhanced = stereo_link(orig, enhanced)
     g = 10 ** (-reduction_db / 20)
     y = highpass(enhanced, hp_hz) + g * highpass(orig, hp_hz)
     if dereverb:
