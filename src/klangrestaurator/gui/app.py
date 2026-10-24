@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
         self._preview_slot = 0          # alternates 0/1 so the player never reads a file being written
         self._job_is_preview = False
         self._refresh_pending = False
+        self._next_range: tuple[float, float] | None = None  # preview range wanted by a new selection
         self._pending_load: tuple[int, bool] | None = None  # (position ms, play) once media is loaded
         self._pending_armed = False  # set once the new source started loading (see _on_media_status)
         self._in_set_source = False
@@ -269,7 +270,7 @@ class MainWindow(QMainWindow):
             self._auto_timer.start()  # debounce: restarts while a slider is being dragged
 
     def _auto_refresh(self):
-        """Recompute the current preview range with the new settings, keeping playback going."""
+        """Recompute the preview (new settings and/or new selection), keeping playback going."""
         if not (self._preview_stale and self._preview_range and self.project):
             return
         if self._job:
@@ -277,7 +278,8 @@ class MainWindow(QMainWindow):
             if self._job_is_preview:
                 self._job.cancel()
             return
-        self.make_preview(self._preview_range, resume=True)
+        rng, self._next_range = self._next_range or self._preview_range, None
+        self.make_preview(rng, resume=True)
 
     def _set_busy(self, busy: bool):
         has = self.project is not None and self.project.analysed
@@ -383,6 +385,14 @@ class MainWindow(QMainWindow):
         if b > a:
             self.statusBar().showMessage(f"Auswahl {fmt(a)} – {fmt(b)} ({b - a:.1f} s)")
             self._loop_hint()
+        # once a preview exists, a new selection (>= 1 s) becomes the new preview range
+        if b - a >= 1 and self._preview_range and self.project:
+            rng = (a, min(b, a + 120, self.project.duration))
+            if rng != self._preview_range:
+                self._next_range = rng
+                self._preview_stale = True
+                self.lbl_prev.setText(f"Auswahl geändert – Vorschau {fmt(rng[0])} – {fmt(rng[1])} wird berechnet…")
+                self._auto_timer.start()
 
     def _on_seek(self, t: float):
         r = self._preview_range
@@ -398,6 +408,8 @@ class MainWindow(QMainWindow):
         if not self.project or self._job:
             return
         self._auto_timer.stop()
+        if not resume:
+            self._next_range = None  # an explicit request wins over a queued selection change
         if rng:
             a, b = rng
         else:
@@ -422,6 +434,10 @@ class MainWindow(QMainWindow):
             pos = self.player.position() if (resume and self.player) else 0
             if resume and self._pending_load:  # previous swap still loading: carry its intent over
                 pos, playing = self._pending_load[0], self._pending_load[1] or playing
+            if resume and self._preview_range and self._preview_range != (a, b):
+                # new range: keep the same moment in the recording if it is inside, else start at a
+                t = self._preview_range[0] + pos / 1000
+                pos = int((t - a) * 1000) if a <= t < b else 0
             self.files_ab = files
             self._preview_range = (a, b)
             self._preview_stale = False
