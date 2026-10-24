@@ -1,4 +1,6 @@
-.venv/
+# venv lives in .venv.nosync (iCloud skips *.nosync); .venv is a symlink to it
+.venv
+.venv.nosync/
 __pycache__/
 *.pyc
 .pytest_cache/

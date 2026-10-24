@@ -63,6 +63,10 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 - Manually corrected segments have `manual=True`; reclassify overwrites them (by design for now).
 - Long jobs must check `cancel()` between blocks and raise `Cancelled`.
 - QtMultimedia is created lazily (it can segfault in headless Linux containers).
+- The project sits in iCloud-synced ~/Documents. iCloud sets the macOS `hidden` flag on files it syncs, and Python
+  then skips `.pth` files while Qt skips plugins. So the venv lives in `.venv.nosync/` (iCloud ignores `*.nosync`)
+  with `.venv` as a symlink to it. If it was recreated as a plain dir: `rm -rf .venv && mkdir .venv.nosync &&
+  ln -s .venv.nosync .venv && uv sync`.
 - Origin: this replicates a manual restoration of two Zoom recordings (Ingeborg-Bachmann reading with cello)
   that was judged good; "Natürlich" is the preset that was chosen.
 
