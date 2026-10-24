@@ -109,17 +109,45 @@ def hiss_cut(x: np.ndarray, db: float, f0: float = 8000.0) -> np.ndarray:
     return (x - (1 - 10 ** (db / 20)) * hi).astype(np.float32)
 
 
+def _gate_pauses(x: np.ndarray, below_db: float = 22.0, ratio: float = 2.0) -> np.ndarray:
+    """Gentle downward expander: lowers what is more than ``below_db`` under the loud parts
+    (the hiss between notes); smoothed over ~100 ms so note tails fade rather than chop."""
+    f = SR // 200
+    n = len(x) // f * f
+    if n < 10 * f:
+        return np.asarray(x, dtype=np.float32)
+    lv = 10 * np.log10((np.asarray(x[:n]) ** 2).mean(axis=1).reshape(-1, f).mean(axis=1) + 1e-12)
+    lv = ss.medfilt(lv, 5)
+    ref = np.percentile(lv, 80) - below_db
+    gdb = np.minimum(0.0, (lv - ref) * (ratio - 1))
+    gdb = ss.filtfilt(np.ones(20) / 20, [1.0], gdb)
+    g = 10 ** (np.interp(np.arange(len(x)), (np.arange(len(gdb)) + 0.5) * f, gdb) / 20)
+    return (x * g[:, None]).astype(np.float32)
+
+
 def music_chain(x: np.ndarray, noise: np.ndarray, reduction: float, hp_hz: float,
-                hiss_db: float = 0.0) -> np.ndarray:
+                hiss_db: float = 0.0, n_std: float = 1.5, second_pass: float = 0.0,
+                gate: bool = False) -> np.ndarray:
     """Stationary spectral gating with a fine frequency resolution suited to instruments, then the
-    optional hiss shelf (chosen by ear on 01.wav: 85 % + −6 dB above 8 kHz)."""
+    optional hiss shelf. Variants from the listening tests (settings.MUSIC_VARIANTS): a higher
+    threshold ``n_std``, a ``second_pass`` of NR, and a ``gate`` between notes.
+    Chosen by ear on 01.wav: 85 % + −6 dB above 8 kHz."""
     import noisereduce as nr
 
     xh = highpass(x, hp_hz)
     if reduction <= 0:
         return hiss_cut(xh, hiss_db)
     nh = highpass(noise, hp_hz)
-    y = nr.reduce_noise(y=xh.T, sr=SR, y_noise=nh.T, stationary=True, prop_decrease=float(reduction),
-                        n_fft=4096, n_std_thresh_stationary=1.5, freq_mask_smooth_hz=200,
-                        time_mask_smooth_ms=100, n_jobs=1)
-    return hiss_cut(np.asarray(y, dtype=np.float32).T[: len(x)], hiss_db)
+
+    def nr_pass(z, prop):
+        y = nr.reduce_noise(y=z.T, sr=SR, y_noise=nh.T, stationary=True, prop_decrease=float(prop),
+                            n_fft=4096, n_std_thresh_stationary=n_std, freq_mask_smooth_hz=200,
+                            time_mask_smooth_ms=100, n_jobs=1)
+        return np.asarray(y, dtype=np.float32).T[: len(x)]
+
+    y = nr_pass(xh, reduction)
+    if second_pass > 0:
+        y = nr_pass(y, second_pass)
+    if gate:
+        y = _gate_pauses(y)
+    return hiss_cut(y, hiss_db)

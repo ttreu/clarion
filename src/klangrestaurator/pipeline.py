@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from . import analysis, audio_io, chains, dfn, dynamics, tone
-from .analysis import MIX, SPEECH, Segment
+from .analysis import MIX, MUSIC, SPEECH, Segment
 from .settings import SR, Settings
 
 Progress = Callable[[str, float], None] | None
@@ -298,8 +298,10 @@ class Project:
             pa, pb = max(0, a - pad), min(N, b + pad)
             o = np.asarray(self.orig[pa:pb])
             x = chains.highpass(o, settings.music_highpass_hz)[a - pa:b - pa]
+            only_music = all(sg.kind == MUSIC for sg in run)   # the pause gate is for music sections only
             y = chains.music_chain(o, noise, settings.music_reduction, settings.music_highpass_hz,
-                                   settings.music_hiss_db)[a - pa:b - pa]
+                                   settings.music_hiss_db, settings.music_nstd, settings.music_pass2,
+                                   settings.music_gate and only_music)[a - pa:b - pa]
             ms = analysis.speech_mask(segs, b - a, settings.crossfade_s, start=a,
                                       onset_fade_s=settings.onset_fade_s, mix_fade_s=settings.mix_fade_s)[:, None]
             out[a - A:b - A] += (1 - ms) * (y - x)
@@ -371,6 +373,31 @@ class Project:
             return dynamics.loudness(pr)
         return self.orig_loudness + dynamics.loudness(pr) - dynamics.loudness(po)
 
+    def _tame_music(self, y: np.ndarray, start_s: float, g: float, settings: Settings) -> bool:
+        """Turn down music stretches whose short-term loudness after the gain ``g`` would exceed the
+        target by more than ``music_ceiling_lu`` (in place). True if anything was changed."""
+        hop = 0.1
+        stl = dynamics.short_term_lufs(y, hop) + 20 * np.log10(max(g, 1e-12))
+        if not len(stl):
+            return False
+        t = start_s + (np.arange(len(stl)) + 0.5) * hop
+        music = np.zeros(len(stl), bool)
+        for sg in self.segments:
+            if sg.kind == MUSIC:
+                music |= (t >= sg.start) & (t < sg.end)
+        red = np.where(music, np.minimum(0.0, settings.loudness_target + settings.music_ceiling_lu - stl), 0.0)
+        if red.min() > -0.1:
+            return False
+        import scipy.ndimage as nd
+        red = nd.minimum_filter1d(red, 31)                         # start early, hold through the passage
+        red = np.convolve(red, np.ones(21) / 21, "same")           # ~2 s soft ramps
+        centres = (np.arange(len(red)) + 0.5) * hop * SR
+        for s in range(0, len(y), BLOCK_S * SR):
+            e = min(len(y), s + BLOCK_S * SR)
+            gdb = np.interp(np.arange(s, e), centres, red)
+            y[s:e] = np.asarray(y[s:e]) * (10 ** (gdb / 20)).astype(np.float32)[:, None]
+        return True
+
     @staticmethod
     def _db_gain(target: float, measured: float, fallback: float = 1.0) -> float:
         return 10 ** ((target - measured) / 20) if np.isfinite(measured) else fallback
@@ -388,9 +415,14 @@ class Project:
         dest = Path(dest)
         if settings.loudness_target is None:   # peak normalisation only (as before)
             g, lim = self.output_gain(y, settings), None
-        else:                                  # loudness normalisation + limiter
+        else:                                  # loudness normalisation (+ music ceiling) + limiter
             p("Lautheit messen", 0.86)
             g = self._db_gain(settings.loudness_target, dynamics.loudness(y), self.output_gain(y, settings))
+            if settings.music_ceiling_lu is not None:
+                # turn down music that would end up too loud; the gain stays as measured before, so
+                # speech keeps its level (re-measuring would raise everything again and undo the cap
+                # when music is a large part of the file)
+                self._tame_music(y, start_s, g, settings)
             lim = dynamics.Limiter(settings.limiter_db)
         audio_io.write_wav(y, SR, dest, gain=g, out_sr=out_sr, subtype=subtype, limiter=lim,
                            progress=lambda v: p("Datei schreiben", 0.9 + 0.1 * min(1, v)))
@@ -429,6 +461,9 @@ class Project:
             g_o = self._db_gain(settings.loudness_target, self.orig_loudness, self.preview_gain(settings))
             g = self._db_gain(settings.loudness_target, self.estimated_loudness(settings, cancel),
                               self.preview_gain(settings))
+            if settings.music_ceiling_lu is not None:
+                y = np.array(y, dtype=np.float32)
+                self._tame_music(y, start_s, g, settings)
             lim_o, lim_r = dynamics.Limiter(settings.limiter_db), dynamics.Limiter(settings.limiter_db)
         audio_io.write_wav(self.orig, SR, f_o, start=a, stop=b, gain=g_o, subtype="PCM_16", limiter=lim_o)
         audio_io.write_wav(y, SR, f_r, gain=g, subtype="PCM_16", limiter=lim_r)

@@ -68,6 +68,32 @@ def loudness(x: np.ndarray, block_s: int = 60) -> float:
     return m.lufs
 
 
+def short_term_lufs(x: np.ndarray, hop_s: float = 0.1, win_s: float = 3.0, block_s: int = 60) -> np.ndarray:
+    """Short-term loudness (BS.1770 K-weighting, ``win_s`` window) every ``hop_s``; value i belongs to
+    the time (i + 0.5) * hop_s. Blockwise, so it works on memmaps."""
+    hop = int(hop_s * SR)
+    zi, powers, carry = None, [], np.zeros(0)
+    for s in range(0, len(x), block_s * SR):
+        y = np.asarray(x[s:s + block_s * SR], dtype=np.float64)
+        y = y[:, None] if y.ndim == 1 else y
+        if zi is None:
+            zi = np.zeros((_SOS_K.shape[0], 2, y.shape[1]))
+        f, zi = ss.sosfilt(_SOS_K, y, axis=0, zi=zi)
+        carry = np.concatenate([carry, (f ** 2).sum(axis=1)])
+        m = len(carry) // hop
+        if m:
+            powers.append(carry[:m * hop].reshape(m, hop).mean(axis=1))
+            carry = carry[m * hop:]
+    if len(carry):
+        powers.append(np.array([carry.mean()]))
+    if not powers:
+        return np.zeros(0)
+    pw = np.concatenate(powers)
+    k = max(1, int(round(win_s / hop_s)))
+    avg = np.convolve(pw, np.ones(k) / k, "same")
+    return -0.691 + 10 * np.log10(avg + 1e-12)
+
+
 def true_peak_db(x: np.ndarray, block_s: int = 60) -> float:
     """Approximate true peak (4× oversampled) in dBTP, blockwise."""
     peak = 0.0
@@ -102,11 +128,14 @@ def _to_samples(g: np.ndarray, n: int) -> np.ndarray:
 class Limiter:
     """Look-ahead peak limiter on a 1 ms grid; keeps its state across consecutive blocks.
 
+    Release 400 ms: the first version let go after 80 ms, which distorted loud low-pitched music
+    audibly (ZOOM0002.WAV, cello at 28:44 – heard as "clipping").
+
     Feed blocks in order with ``process``; it delays the audio by the look-ahead, so call ``flush``
     at the end to get the remaining samples.
     """
 
-    def __init__(self, ceiling_db: float = -1.0, lookahead_ms: int = 5, release_ms: float = 80.0):
+    def __init__(self, ceiling_db: float = -1.0, lookahead_ms: int = 5, release_ms: float = 400.0):
         self.ceiling = 10 ** (ceiling_db / 20)
         self.la = lookahead_ms
         self.r = np.exp(-1.0 / release_ms)

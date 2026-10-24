@@ -175,3 +175,89 @@ def test_drag_in_and_out_markers(app):
     _mouse(w, QtCore.QEvent.MouseMove, 350, L, y=8)
     _mouse(w, QtCore.QEvent.MouseButtonRelease, 350, none, y=8)
     assert moved and abs(moved[-1] - 35) < 0.2
+
+
+def _wheel(w, dx, dy, phase, pixel=True, mods=None):
+    pos = QtCore.QPointF(500, 80)
+    pd = QtCore.QPoint(int(dx), int(dy)) if pixel else QtCore.QPoint()
+    ad = QtCore.QPoint(int(dx * 8), int(dy * 8)) if pixel else QtCore.QPoint(int(dx), int(dy))
+    ev = QtGui.QWheelEvent(pos, w.mapToGlobal(pos), pd, ad, QtCore.Qt.NoButton,
+                           mods or QtCore.Qt.NoModifier, phase, False)
+    QtWidgets.QApplication.sendEvent(w, ev)
+
+
+def test_trackpad_axis_lock_and_gentle_zoom(app):
+    w = Timeline()
+    w.resize(1000, 160)
+    w.set_data(np.full(2400, -30.0), [Segment(0, 600, SPEECH)], 600.0)
+    w.view = (100.0, 300.0)
+    P = QtCore.Qt
+    # mostly horizontal swipe with a little vertical jitter: pans only, span unchanged
+    _wheel(w, 0, 0, P.ScrollBegin)
+    for _ in range(10):
+        _wheel(w, -10, 3, P.ScrollUpdate)
+    _wheel(w, 0, 0, P.ScrollEnd)
+    a, b = w.view
+    assert abs((b - a) - 200) < 1e-6 and a > 100
+    # mostly vertical swipe: zooms only, and gently (one small event ≈ a few percent, not 25 %)
+    w.view = (100.0, 300.0)
+    _wheel(w, 0, 0, P.ScrollBegin)
+    _wheel(w, 1, 8, P.ScrollUpdate)                 # decides the axis
+    span0 = w.view[1] - w.view[0]
+    _wheel(w, 1, 4, P.ScrollUpdate)
+    span1 = w.view[1] - w.view[0]
+    _wheel(w, 0, 0, P.ScrollEnd)
+    assert span1 < span0 and span1 / span0 > 0.95
+    t_mid = w._t(500)
+    assert abs(t_mid - w._t(500)) < 1e-9           # anchored at the cursor
+    # classic mouse wheel: one notch = one 0.8× zoom step; Shift + wheel pans
+    w.view = (100.0, 300.0)
+    _wheel(w, 0, 120, P.NoScrollPhase, pixel=False)
+    assert abs((w.view[1] - w.view[0]) - 160) < 1e-6
+    a0 = w.view[0]
+    _wheel(w, 0, 120, P.NoScrollPhase, pixel=False, mods=P.ShiftModifier)
+    assert abs((w.view[1] - w.view[0]) - 160) < 1e-6 and w.view[0] != a0
+
+
+def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_file, no_dfn, tmp_path):
+    import time
+
+    monkeypatch.setenv("KLANGRESTAURATOR_NO_AUDIO", "1")
+    from klangrestaurator.gui.app import MainWindow
+
+    def pump(w, cond, limit=30):
+        t = time.time()
+        while time.time() - t < limit and not cond():
+            app.processEvents()
+            time.sleep(0.01)
+
+    path, _ = reading_file
+    w = MainWindow()
+    try:
+        w.open_audio(path)
+        pump(w, lambda: w.project.analysed and w._job is None)
+        w._on_relabel(2.0, 6.0, MIX)
+        w._on_trim(1.0, 25.0)
+        w._on_tone_ref(20.0, 24.0)
+        w.cmb_v_music.activated.emit(4)                 # music variant E
+        w.sl_tone.setValue(40)
+        assert w._dirty and w.windowTitle().endswith("•")
+        proj = tmp_path / "test.klang"
+        monkeypatch.setattr(w, "_project_path", proj)   # avoid the save dialog
+        assert w.save_project()
+        assert not w._dirty and proj.exists()
+        expected = ([(s.start, s.end, s.kind) for s in w.project.segments], w.settings())
+    finally:
+        w.close()
+    w2 = MainWindow()
+    try:
+        w2.open_project(proj)
+        pump(w2, lambda: w2.project is not None and w2.project.analysed and w2._job is None)
+        app.processEvents()
+        assert [(s.start, s.end, s.kind) for s in w2.project.segments] == expected[0]
+        assert w2.project.trim == (1.0, 25.0) and w2.project.tone_ref == (20.0, 24.0)
+        assert w2.settings() == expected[1]
+        assert w2.cmb_v_music.currentText().startswith("E")
+        assert not w2._dirty and "test.klang" in w2.windowTitle()
+    finally:
+        w2.close()

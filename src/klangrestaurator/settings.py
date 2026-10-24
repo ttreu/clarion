@@ -54,6 +54,12 @@ class Settings:
     """0..1 – proportion of stationary noise removed in music passages (0.85 ≈ -10 dB between notes
     on 01.wav)."""
     music_highpass_hz: float = 30.0
+    music_nstd: float = 1.5
+    """NR threshold in noise standard deviations (higher catches noise slightly above the floor)."""
+    music_pass2: float = 0.0
+    """Strength of an optional second NR pass (0 = off)."""
+    music_gate: bool = False
+    """Lower the hiss between notes with a gentle expander (music sections only)."""
     music_hiss_db: float = -6.0
     """Shelf above 8 kHz for music (and the music share of speech + music); 0 = off. Chosen by ear on
     01.wav together with 85 % reduction over stronger or two-pass NR (no 'underwater' sound)."""
@@ -78,6 +84,10 @@ class Settings:
     loudness_target: float | None = -16.0
     """Integrated loudness of the export in LUFS (EBU R128 / ITU-R BS.1770), followed by a limiter.
     None: only normalise the peak to ``peak_dbfs`` as before."""
+    music_ceiling_lu: float | None = 3.0
+    """After loudness normalisation, music sections may be at most this many LU above the target
+    (3 s short-term loudness); louder stretches are turned down smoothly. None = off. Without it a
+    speech-heavy file was raised so much that loud music hit the limiter hard (ZOOM0002.WAV: 28:44)."""
     limiter_db: float = -1.0
     """Limiter ceiling (dBFS) after loudness normalisation."""
 
@@ -95,8 +105,48 @@ class Settings:
         return self if self.normalize else replace(self, loudness_target=None)
 
 
+# Variants from the listening tests, selectable per group for the whole project (GUI drop-downs).
+# Each maps to Settings fields; the letters match the sample files the user compared.
+SPEECH_VARIANTS: list[tuple[str, str, dict]] = [
+    ("A", "20 dB", dict(speech_reduction_db=20.0, speech_dereverb=False)),
+    ("B", "25 dB", dict(speech_reduction_db=25.0, speech_dereverb=False)),
+    ("C", "30 dB", dict(speech_reduction_db=30.0, speech_dereverb=False)),
+    ("D", "25 dB + Hallreduktion", dict(speech_reduction_db=25.0, speech_dereverb=True)),
+    ("E", "40 dB + Hallreduktion", dict(speech_reduction_db=40.0, speech_dereverb=True)),
+]
+_M = dict(music_nstd=1.5, music_pass2=0.0, music_gate=False, music_hiss_db=0.0)
+MUSIC_VARIANTS: list[tuple[str, str, dict]] = [
+    ("A", "70 %", {**_M, "music_reduction": 0.70}),
+    ("B", "95 %", {**_M, "music_reduction": 0.95}),
+    ("C", "95 %, höhere Schwelle", {**_M, "music_reduction": 0.95, "music_nstd": 2.0}),
+    ("D", "85 % + Hochton −6 dB", {**_M, "music_reduction": 0.85, "music_hiss_db": -6.0}),
+    ("E", "zweistufig 85 % + 60 %", {**_M, "music_reduction": 0.85, "music_pass2": 0.6}),
+    ("F", "95 % + Pausen-Absenkung", {**_M, "music_reduction": 0.95, "music_gate": True}),
+]
+MIX_VARIANTS: list[tuple[str, str, dict]] = [
+    ("A", "Musikanteil 25 %", dict(mix_music=0.25)),
+    ("B", "Musikanteil 50 %", dict(mix_music=0.5)),
+    ("C", "Musikanteil 75 %", dict(mix_music=0.75)),
+]
+
+
+def variant_of(st: Settings, variants: list[tuple[str, str, dict]]) -> str | None:
+    """Letter of the variant ``st`` matches exactly, or None (custom)."""
+    for letter, _, fields in variants:
+        if all(abs(getattr(st, k) - v) < 1e-6 if isinstance(v, float) else getattr(st, k) == v
+               for k, v in fields.items()):
+            return letter
+    return None
+
+
+def _from_variants(speech: str, music: str, mix: str, **extra) -> Settings:
+    pick = lambda table, letter: next(f for lt, _, f in table if lt == letter)  # noqa: E731
+    return Settings(**pick(SPEECH_VARIANTS, speech), **pick(MUSIC_VARIANTS, music), **pick(MIX_VARIANTS, mix),
+                    **extra)
+
+
 PRESETS: dict[str, Settings] = {
-    "Natürlich": Settings(),
-    "Kräftig": Settings(music_reduction=0.95),
-    "Sanft": Settings(speech_reduction_db=20.0, speech_dereverb=False, music_reduction=0.5, music_hiss_db=-3.0),
+    "Natürlich": _from_variants("E", "D", "B"),
+    "Kräftig": _from_variants("E", "C", "A"),
+    "Sanft": _from_variants("A", "A", "C"),
 }

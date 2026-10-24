@@ -34,10 +34,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, audio_io
+from .. import __version__, audio_io, project_file
 from ..analysis import MIX, MUSIC
 from ..pipeline import Project, default_output_name
-from ..settings import PRESETS, SR, Settings
+from ..settings import MIX_VARIANTS, MUSIC_VARIANTS, PRESETS, SPEECH_VARIANTS, SR, Settings, variant_of
 from . import worker
 from .timeline import Timeline, fmt
 
@@ -57,6 +57,9 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.prefs = QSettings("Klangrestaurator", "Klangrestaurator")
         self.project: Project | None = None
+        self._project_path: Path | None = None   # the .klang file, once saved / opened
+        self._dirty = False                       # unsaved decisions (sections, cut, settings …)
+        self._pending_project: project_file.Loaded | None = None   # applied when its analysis is done
         self._job = None
         self._preview_range: tuple[float, float] | None = None
         self._preview_stale = True
@@ -126,8 +129,14 @@ class MainWindow(QMainWindow):
         top.addRow("Voreinstellung", self.cmb_preset)
         left.addLayout(top)
 
+        # hidden music options that only the variants set (threshold, second pass, pause gate)
+        self._music_extra = {k: getattr(Settings(), k) for k in ("music_nstd", "music_pass2", "music_gate")}
+        self._syncing = False
+
         g_sp = QGroupBox("Klangverbesserung · Sprache")
         f = QFormLayout(g_sp)
+        self.cmb_v_speech = self._variant_box(SPEECH_VARIANTS)
+        f.addRow("Variante", self.cmb_v_speech)
         self.sl_speech, self.lbl_speech = self._slider(0, 40, "dB")
         f.addRow("Rauschreduktion", self._pair(self.sl_speech, self.lbl_speech))
         self.chk_wpe = QCheckBox("Zusätzliche Hallreduktion (langsamer, trockener)")
@@ -146,6 +155,8 @@ class MainWindow(QMainWindow):
 
         g_mu = QGroupBox("Klangverbesserung · Musik")
         f = QFormLayout(g_mu)
+        self.cmb_v_music = self._variant_box(MUSIC_VARIANTS)
+        f.addRow("Variante", self.cmb_v_music)
         self.sl_music, self.lbl_music = self._slider(0, 100, "%")
         f.addRow("Rauschreduktion", self._pair(self.sl_music, self.lbl_music))
         self.chk_hiss = QCheckBox("Hochton-Rauschen absenken (ab 8 kHz)")
@@ -157,6 +168,8 @@ class MainWindow(QMainWindow):
 
         g_mix = QGroupBox("Klangverbesserung · Sprache + Musik")
         f = QFormLayout(g_mix)
+        self.cmb_v_mix = self._variant_box(MIX_VARIANTS)
+        f.addRow("Variante", self.cmb_v_mix)
         self.sl_mix, self.lbl_mix = self._slider(0, 100, "%")
         self.sl_mix.setToolTip("„Sprache + Musik“ = KI-Stimme + dieser Anteil des entrauschten Originals. "
                                "Weniger: trockener, weniger Rauschen, Musik leiser. "
@@ -164,6 +177,12 @@ class MainWindow(QMainWindow):
         f.addRow("Musikanteil", self._pair(self.sl_mix, self.lbl_mix))
         left.addWidget(g_mix)
         left.addStretch(1)
+        for wdg, sig in ((self.sl_speech, "valueChanged"), (self.chk_wpe, "toggled"), (self.sl_music, "valueChanged"),
+                         (self.chk_hiss, "toggled"), (self.sl_mix, "valueChanged")):
+            getattr(wdg, sig).connect(self._sync_variants)
+        self.cmb_v_speech.activated.connect(lambda i: self._pick_variant(SPEECH_VARIANTS, i))
+        self.cmb_v_music.activated.connect(lambda i: self._pick_variant(MUSIC_VARIANTS, i))
+        self.cmb_v_mix.activated.connect(lambda i: self._pick_variant(MIX_VARIANTS, i))
         for box in (g_sp, g_mu, g_mix):  # same label width → sliders line up across the groups
             form = box.layout()
             for r in range(form.rowCount()):
@@ -185,6 +204,13 @@ class MainWindow(QMainWindow):
         self.cmb_loud.currentIndexChanged.connect(lambda i: (self.prefs.setValue("loudness_idx", i),
                                                              self._mark_stale()))
         f.addRow("Ziel", self.cmb_loud)
+        self.chk_ceiling = QCheckBox("Laute Musik begrenzen (höchstens 3 LU über dem Ziel)")
+        self.chk_ceiling.setToolTip("Besteht eine Aufnahme vor allem aus leiser Sprache, hebt die Lautheits-Anpassung "
+                                    "alles stark an – laute Musikstellen landen dann am Limiter und verzerren. "
+                                    "Mit dieser Option werden nur diese Stellen sanft zurückgenommen.")
+        self.chk_ceiling.setChecked(True)
+        self.chk_ceiling.toggled.connect(self._mark_stale)
+        f.addRow("", self.chk_ceiling)
         self.chk_norm.toggled.connect(self._toggle_normalize)
         self._toggle_normalize(self.chk_norm.isChecked(), refresh=False)
         right.addWidget(self.chk_norm)
@@ -241,6 +267,13 @@ class MainWindow(QMainWindow):
         m = self.menuBar().addMenu("Datei")
         a = QAction("Öffnen…", self, shortcut=QKeySequence.Open, triggered=self.open_dialog)
         m.addAction(a)
+        m.addSeparator()
+        a = QAction("Projekt speichern", self, shortcut=QKeySequence.Save, triggered=lambda: self.save_project())
+        m.addAction(a)
+        a = QAction("Projekt speichern unter…", self, shortcut=QKeySequence("Ctrl+Shift+S"),
+                    triggered=lambda: self.save_project(ask=True))
+        m.addAction(a)
+        m.addSeparator()
         a = QAction("Exportieren…", self, shortcut=QKeySequence("Ctrl+E"), triggered=self.export_dialog)
         m.addAction(a)
         a = QAction("Erkennung neu berechnen", self, triggered=self.reclassify)
@@ -334,6 +367,53 @@ class MainWindow(QMainWindow):
         h.addWidget(b)
         return w
 
+    # ------------------------------------------------------------------ variants
+    @staticmethod
+    def _variant_box(table) -> QComboBox:
+        box = QComboBox()
+        box.addItems([f"{letter} – {label}" for letter, label, _ in table] + ["Benutzerdefiniert"])
+        box.setToolTip("Varianten aus den Hörvergleichen – gilt für das ganze Projekt. Die Regler darunter "
+                       "zeigen, was die Variante einstellt; wer sie verändert, landet bei „Benutzerdefiniert“.")
+        return box
+
+    def _apply_fields(self, f: dict) -> None:
+        """Put Settings fields into the widgets (only the ones present in ``f``)."""
+        if "speech_reduction_db" in f:
+            self.sl_speech.setValue(int(round(f["speech_reduction_db"])))
+        if "speech_dereverb" in f:
+            self.chk_wpe.setChecked(bool(f["speech_dereverb"]))
+        if "music_reduction" in f:
+            self.sl_music.setValue(int(round(f["music_reduction"] * 100)))
+        if "music_hiss_db" in f:
+            self.chk_hiss.setChecked(f["music_hiss_db"] < 0)
+        for k in self._music_extra:
+            if k in f:
+                self._music_extra[k] = f[k]
+        if "mix_music" in f:
+            self.sl_mix.setValue(int(round(f["mix_music"] * 100)))
+
+    def _pick_variant(self, table, i: int) -> None:
+        if i >= len(table):       # "Benutzerdefiniert": nothing to apply
+            return
+        self._apply_fields(table[i][2])
+        self._sync_variants()
+        self._mark_stale()
+
+    def _sync_variants(self, *_):
+        """Show which variant the current settings are (or "Benutzerdefiniert")."""
+        if self._syncing:
+            return
+        self._syncing = True
+        st = self.settings()
+        for box, table in ((self.cmb_v_speech, SPEECH_VARIANTS), (self.cmb_v_music, MUSIC_VARIANTS),
+                           (self.cmb_v_mix, MIX_VARIANTS)):
+            letter = variant_of(st, table)
+            idx = next((i for i, (lt, _, _) in enumerate(table) if lt == letter), len(table))
+            box.blockSignals(True)
+            box.setCurrentIndex(idx)
+            box.blockSignals(False)
+        self._syncing = False
+
     def settings(self) -> Settings:
         base = PRESETS.get(self.cmb_preset.currentText(), Settings())
         return base.with_(speech_reduction_db=float(self.sl_speech.value()),
@@ -342,19 +422,19 @@ class MainWindow(QMainWindow):
                           level_match=self.sl_level.value() / 100,
                           normalize=self.chk_norm.isChecked(),
                           loudness_target=LOUDNESS[self.cmb_loud.currentIndex()][1],
+                          music_ceiling_lu=3.0 if self.chk_ceiling.isChecked() else None,
                           music_reduction=self.sl_music.value() / 100,
-                          music_hiss_db=(base.music_hiss_db or -6.0) if self.chk_hiss.isChecked() else 0.0,
+                          music_hiss_db=-6.0 if self.chk_hiss.isChecked() else 0.0,
+                          **self._music_extra,
                           mix_music=self.sl_mix.value() / 100)
 
     def _apply_preset(self, name: str):
         st = PRESETS.get(name)
         if not st:
             return
-        self.sl_speech.setValue(int(st.speech_reduction_db))
-        self.sl_music.setValue(int(round(st.music_reduction * 100)))
-        self.chk_hiss.setChecked(st.music_hiss_db < 0)
-        self.sl_mix.setValue(int(round(st.mix_music * 100)))
-        self.chk_wpe.setChecked(st.speech_dereverb)
+        self._apply_fields({k: getattr(st, k) for k in ("speech_reduction_db", "speech_dereverb", "music_reduction",
+                                                         "music_hiss_db", "mix_music", *self._music_extra)})
+        self._sync_variants()
         self.sl_tone.setValue(int(round(st.tone_match * 100)))
         self.sl_level.setValue(int(round(st.level_match * 100)))
         self.prefs.setValue("preset", name)
@@ -363,6 +443,8 @@ class MainWindow(QMainWindow):
     def _toggle_normalize(self, on: bool, refresh: bool = True):
         self.prefs.setValue("normalize", on)
         self.cmb_loud.setEnabled(on)
+        if hasattr(self, "chk_ceiling"):
+            self.chk_ceiling.setEnabled(on)
         if refresh:
             self._mark_stale()
             self._auto_timer.stop()   # a switch, not a slider: no need to wait for more changes
@@ -370,6 +452,8 @@ class MainWindow(QMainWindow):
 
     def _mark_stale(self, *_):
         self._preview_stale = True
+        if self.project is not None and not self._syncing:
+            self._set_dirty()
         if self._preview_range and not self._orig_only:
             self.lbl_prev.setText("Einstellungen geändert – Vorschau wird neu berechnet…")
             self._auto_timer.start()  # debounce: restarts while a slider is being dragged
@@ -442,16 +526,130 @@ class MainWindow(QMainWindow):
     def dropEvent(self, e):
         for u in e.mimeData().urls():
             p = Path(u.toLocalFile())
+            if p.suffix.lower() == project_file.SUFFIX:
+                self.open_project(p)
+                return
             if p.suffix.lower() in AUDIO_EXT:
-                self.load(p)
+                self.open_audio(p)
                 return
 
     def open_dialog(self):
         start = self.prefs.value("last_dir", str(Path.home()))
-        fn, _ = QFileDialog.getOpenFileName(self, "Audiodatei öffnen", start,
-                                            "Audio (*.wav *.aif *.aiff *.flac *.mp3 *.m4a *.ogg *.w64)")
-        if fn:
-            self.load(Path(fn))
+        fn, _ = QFileDialog.getOpenFileName(
+            self, "Audiodatei oder Projekt öffnen", start,
+            "Audio oder Projekt (*.wav *.aif *.aiff *.flac *.mp3 *.m4a *.ogg *.w64 *.klang);;"
+            "Klangrestaurator-Projekt (*.klang);;Audio (*.wav *.aif *.aiff *.flac *.mp3 *.m4a *.ogg *.w64)")
+        if not fn:
+            return
+        if Path(fn).suffix.lower() == project_file.SUFFIX:
+            self.open_project(Path(fn))
+        else:
+            self.open_audio(Path(fn))
+
+    # ------------------------------------------------------------------ project files
+    def open_audio(self, path: Path):
+        if not self._confirm_discard():
+            return
+        self._pending_project = None
+        self._project_path = None
+        self.load(path)
+        self._set_dirty(False)
+
+    def open_project(self, path: Path):
+        if not self._confirm_discard():
+            return
+        try:
+            lp = project_file.load(path)
+        except (OSError, ValueError, KeyError) as err:
+            QMessageBox.critical(self, "Projekt öffnen", f"Das Projekt kann nicht geöffnet werden:\n{err}")
+            return
+        src = lp.source
+        if src is None:   # audio moved: let the user find it
+            QMessageBox.information(self, "Projekt öffnen", f"Die Audiodatei wurde nicht gefunden:\n{lp.source_abs}"
+                                    "\n\nBitte die Datei suchen.")
+            fn, _ = QFileDialog.getOpenFileName(self, "Audiodatei suchen", str(path.parent),
+                                                "Audio (*.wav *.aif *.aiff *.flac *.mp3 *.m4a *.ogg *.w64)")
+            if not fn:
+                return
+            src = Path(fn)
+        self._pending_project = lp
+        self._project_path = lp.path
+        self._apply_settings(lp.settings, lp.gui)     # show the project's settings right away
+        self.load(src)
+        self._set_dirty(False)
+
+    def _apply_project(self, lp: project_file.Loaded):
+        """After the analysis: put the project's sections, cut and tone reference in place."""
+        p = self.project
+        if lp.segments:
+            p.segments = lp.segments
+            p.save_segments()
+        try:
+            p.set_trim(lp.trim)
+        except ValueError:
+            p.set_trim(None)
+        p.set_tone_ref(lp.tone_ref)
+        self.timeline.set_segments(p.segments)
+        self.timeline.trim, self.timeline.ref = p.trim, p.tone_ref
+        self.timeline.update()
+
+    def save_project(self, ask: bool = False) -> bool:
+        if not self.project:
+            return False
+        path = self._project_path
+        if ask or path is None:
+            default = path or self.project.source.with_suffix(project_file.SUFFIX)
+            fn, _ = QFileDialog.getSaveFileName(self, "Projekt speichern", str(default),
+                                                "Klangrestaurator-Projekt (*.klang)")
+            if not fn:
+                return False
+            path = Path(fn)
+        p = self.project
+        gui = {"preset": self.cmb_preset.currentText(), "rate_idx": self.cmb_rate.currentIndex(),
+               "loudness_idx": self.cmb_loud.currentIndex()}
+        self._project_path = project_file.save(path, p.source, p.segments, p.trim, p.tone_ref, self.settings(), gui)
+        self._set_dirty(False)
+        self.statusBar().showMessage(f"Projekt gespeichert: {self._project_path}")
+        return True
+
+    def _apply_settings(self, st: Settings, gui: dict):
+        """Put saved settings into all controls."""
+        self._syncing = True
+        self.cmb_preset.blockSignals(True)
+        if gui.get("preset") in PRESETS:
+            self.cmb_preset.setCurrentText(gui["preset"])
+        self.cmb_preset.blockSignals(False)
+        self._apply_fields({k: getattr(st, k) for k in ("speech_reduction_db", "speech_dereverb", "music_reduction",
+                                                         "music_hiss_db", "mix_music", *self._music_extra)})
+        self.sl_tone.setValue(int(round(st.tone_match * 100)))
+        self.sl_level.setValue(int(round(st.level_match * 100)))
+        targets = [t for _, t in LOUDNESS]
+        if st.loudness_target is not None:
+            self.cmb_loud.setCurrentIndex(min(range(len(targets)), key=lambda i: abs(targets[i] - st.loudness_target)))
+        self.chk_norm.setChecked(st.normalize and st.loudness_target is not None)
+        self.chk_ceiling.setChecked(st.music_ceiling_lu is not None)
+        if "rate_idx" in gui:
+            self.cmb_rate.setCurrentIndex(int(gui["rate_idx"]))
+        self._syncing = False
+        self._sync_variants()
+
+    def _set_dirty(self, dirty: bool = True):
+        self._dirty = dirty and self.project is not None
+        name = (self._project_path.name if self._project_path
+                else self.project.source.name if self.project else "")
+        self.setWindowTitle("Klangrestaurator" + (f" – {name}" if name else "") + (" •" if self._dirty else ""))
+        self.setWindowModified(self._dirty)
+
+    def _confirm_discard(self) -> bool:
+        """True if it is fine to drop the current project (saved, discarded, or nothing to lose)."""
+        if not self._dirty or os.environ.get("KLANGRESTAURATOR_NO_PROMPT"):
+            return True
+        r = QMessageBox.question(self, "Ungespeicherte Änderungen",
+                                 "Das Projekt hat ungespeicherte Änderungen. Jetzt speichern?",
+                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
+        if r == QMessageBox.Save:
+            return self.save_project()
+        return r == QMessageBox.Discard
 
     def load(self, path: Path):
         self._stop()
@@ -478,6 +676,10 @@ class MainWindow(QMainWindow):
         self.timeline.set_data(p.levels, p.segments, p.duration)
         self.timeline.ref = p.tone_ref
         self.timeline.trim = p.trim
+        if self._pending_project is not None:
+            self._apply_project(self._pending_project)
+            self._pending_project = None
+            self._set_dirty(False)
         n_music = sum(1 for s in p.segments if s.kind == MUSIC)
         t_music = sum(s.duration for s in p.segments if s.kind == MUSIC)
         n_mix = sum(1 for s in p.segments if s.kind == MIX)
@@ -508,6 +710,7 @@ class MainWindow(QMainWindow):
             return
         self.timeline.trim = self.project.trim
         self.timeline.update()
+        self._set_dirty()
         tr = self.project.trim
         self.statusBar().showMessage(
             f"Export von {fmt(tr[0])} bis {fmt(tr[1])} ({fmt(tr[1] - tr[0])} min)" if tr else "Zuschnitt aufgehoben")
@@ -516,6 +719,7 @@ class MainWindow(QMainWindow):
         if not self.project:
             return
         self.project.move_boundary(old, new)
+        self._set_dirty()
         self.timeline.set_segments(self.project.segments)
         self.statusBar().showMessage(f"Grenze verschoben: {fmt(old)} → {fmt(new)}")
         self._mark_stale()
@@ -525,6 +729,7 @@ class MainWindow(QMainWindow):
             return
         rng = None if a < 0 else (a, b)
         self.project.set_tone_ref(rng)
+        self._set_dirty()
         self.timeline.ref = rng
         self.timeline.update()
         self.statusBar().showMessage("Klangreferenz: " + (f"{fmt(a)} – {fmt(b)}" if rng else "automatisch"))
@@ -534,6 +739,7 @@ class MainWindow(QMainWindow):
         if not self.project:
             return
         self.project.set_kind(a, b, kind)
+        self._set_dirty()
         self.timeline.set_segments(self.project.segments)
         self._mark_stale()
 
@@ -837,6 +1043,9 @@ class MainWindow(QMainWindow):
                           "Automatische Sprach-/Musik-Erkennung mit manueller Korrektur.</p>")
 
     def closeEvent(self, e):
+        if not self._confirm_discard():
+            e.ignore()
+            return
         if self._job:
             self._job.cancel()
         worker.wait_all()

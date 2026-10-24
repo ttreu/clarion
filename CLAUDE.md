@@ -45,7 +45,9 @@ render(range, Settings):
          music→speech 0.5 s centred; speech→music 40 ms ending at the onset, which render() snaps
          to 5 ms precision (snap_music_onsets, auto boundaries only) so the music chain's higher
          noise floor arrives with the music instead of swelling in the silence before it
-export: loudness normalise to loudness_target LUFS (BS.1770, blockwise) → look-ahead limiter at −1 dBFS
+export: loudness normalise to loudness_target LUFS (BS.1770, blockwise) → music ceiling (music_ceiling_lu: 3 s
+   short-term loudness of MUSIC sections capped at target + 3 LU, smooth ~2 s ramps; gain is NOT re-measured
+   afterwards, or the cap would be undone) → look-ahead limiter at −1 dBFS, release 400 ms
    (dynamics.Limiter, stateful across blocks) → 24-bit WAV via audio_io.StreamWriter (seamless resampling with
    context). Settings.normalize off (GUI group checkbox „Lautheit“, CLI --no-normalize) → old peak normalisation.
    Tried and dropped (no audible benefit in a blind listening comparison on 02.WAV, see git history): a voice
@@ -86,6 +88,8 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   Applied as one STFT EQ to the speech chain and the MIX voice part; music is untouched
 - `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
+- `project_file.py` – `.klang` projects (JSON): source (absolute + relative), sections, trim, tone ref, all
+  Settings, GUI choices; opening one re-runs/uses the cached analysis, then applies the user's decisions
 - `cli.py` – CLI; `gui/app.py` main window (settings grouped: Klangverbesserung Sprache / Musik / Sprache + Musik | Lautheit
   (checkable group: LUFS target) | Ausgabe); `gui/timeline.py` level + segment view (click/drag/right-click/zoom; dragging a section boundary
   ±5 px → `analysis.move_boundary`, both neighbours become manual);
@@ -96,6 +100,10 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 
 - Internal rate is always 48 kHz (DeepFilterNet requirement). Don't add resampling inside chains.
 - Segment kinds: `speech`, `music`, `mix` (= "Sprache + Musik"). Labels in `analysis.KIND_LABEL`.
+- Variants (settings.SPEECH_/MUSIC_/MIX_VARIANTS, letters = the listening-test samples) are global per project;
+  the GUI drop-downs set the sliders, any manual change shows "Benutzerdefiniert"; presets are built from them.
+- Timeline navigation: trackpad pinch = zoom, two-finger swipe sideways = pan, up/down = smooth zoom; the first
+  movement locks the axis until the gesture ends. Mouse wheel = zoom step, Shift + wheel = pan.
 - Trim (Anfang/Ende): `Project.trim` (trim.json), set by dragging the In/Out markers (below the section band;
   in the band, boundaries win), right-click or I/O at the playhead; outside the range the waveform is grey; export uses it
   when no explicit range is given and fades 20 ms at cut edges. Analysis still covers the whole file.

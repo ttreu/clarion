@@ -147,3 +147,28 @@ def test_trim_limits_export_with_soft_edges(reading_file, no_dfn, tmp_path):
     assert proj.trim is None
     y, _ = sf.read(proj.export(st, tmp_path / "full.wav"))
     assert len(y) == 30 * SR
+
+
+def test_loud_music_is_capped_above_the_loudness_target(tmp_path, no_dfn):
+    """Mostly quiet speech + a short, much louder music part (like ZOOM0002.WAV): after normalisation
+    the music must stay at most 3 LU above the target, the speech keeps its level."""
+    from conftest import synth_reading
+
+    from klangrestaurator import dynamics
+    x, _ = synth_reading()                                     # speech 0–10, music 10–20, speech 20–30
+    sr = 44100
+    x[10 * sr:20 * sr] *= 4.0                                  # the music is much louder
+    x = np.concatenate([x, np.tile(x[20 * sr:30 * sr], (5, 1))])   # + 50 s more speech: speech dominates
+    path = tmp_path / "laut.wav"
+    sf.write(path, x * 0.2, sr, subtype="PCM_16")
+    proj = Project(path)
+    proj.prepare()
+    st = PRESETS["Sanft"].with_(loudness_target=-16.0)        # fast (no WPE)
+    y, _ = sf.read(proj.export(st, tmp_path / "out.wav"), dtype="float32")
+    y_off, _ = sf.read(proj.export(st.with_(music_ceiling_lu=None), tmp_path / "off.wav"), dtype="float32")
+    mus = slice(int(12 * SR), int(18 * SR))
+    on, off = dynamics.short_term_lufs(y[mus]).max(), dynamics.short_term_lufs(y_off[mus]).max()
+    assert off > -16.0 + 3.0 + 2.0                             # without the cap the music is far too loud
+    assert on <= -16.0 + 3.0 + 0.5                             # with it: at most target + 3 LU
+    sp = slice(int(40 * SR), int(70 * SR))                     # speech keeps its level
+    assert abs(dynamics.loudness(y[sp]) - dynamics.loudness(y_off[sp])) < 0.5

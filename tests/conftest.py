@@ -59,3 +59,4 @@ def isolated_cache(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(pipeline, "cache_root", lambda: root)
     # previews go to tempfile.gettempdir(); keep tests away from the running app's preview files
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path_factory.mktemp("tmp")))
+    monkeypatch.setenv("KLANGRESTAURATOR_NO_PROMPT", "1")       # no "save changes?" dialogs in tests

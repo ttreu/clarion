@@ -1,8 +1,10 @@
 """Level overview with speech/music segments, playhead, selection and zoom."""
 from __future__ import annotations
 
+import time
+
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QSizePolicy, QWidget
 
@@ -48,6 +50,9 @@ class Timeline(QWidget):
         self.ref: tuple[float, float] | None = None  # tone reference range (shown as a green bar)
         self.trim: tuple[float, float] | None = None  # export range; outside is greyed out
         self._trim_drag: str | None = None   # "in" / "out" while a marker is dragged
+        self._axis: str | None = None        # trackpad gesture locked to "pan" or "zoom"
+        self._axis_acc = (0.0, 0.0)          # movement collected before the axis is decided
+        self._last_wheel = 0.0
         self._trim_from: tuple[float, float] | None = None
         self._bound: int | None = None      # index i of the dragged boundary (between segments i and i+1)
         self._bound_from = 0.0
@@ -288,23 +293,70 @@ class Timeline(QWidget):
         self._hover = None
         self.update()
 
-    def wheelEvent(self, e):
-        if self.levels is None:
-            return
-        a, b = self.view
-        t = self._t(e.position().x())
-        dy = e.angleDelta().y()
-        dx = e.angleDelta().x()
-        if dx and not dy:  # horizontal scroll pans
-            shift = -dx / 120 * (b - a) * 0.1
-            a, b = a + shift, b + shift
-        else:
-            f = 0.8 if dy > 0 else 1.25
-            a, b = t - (t - a) * f, t + (b - t) * f
-        span = min(max(b - a, 5.0), self.duration)
+    # ---------------------------------------------------------------- zoom / pan
+    MIN_SPAN_S = 2.0
+
+    def _set_view(self, a: float, b: float) -> None:
+        span = min(max(b - a, self.MIN_SPAN_S), self.duration)
         a = float(np.clip(a, 0, self.duration - span))
         self.view = (a, a + span)
         self.update()
+
+    def _zoom(self, factor: float, x: float) -> None:
+        """Zoom by ``factor`` (< 1 = in) keeping the time under pixel ``x`` in place."""
+        a, b = self.view
+        t = self._t(x)
+        self._set_view(t - (t - a) * factor, t + (b - t) * factor)
+
+    def _pan(self, dx_px: float) -> None:
+        a, b = self.view
+        dt = -dx_px / max(1, self.width()) * (b - a)
+        self._set_view(a + dt, b + dt)
+
+    def event(self, e):
+        # trackpad pinch = zoom around the cursor; two-finger double tap = whole file
+        if e.type() == QEvent.NativeGesture and self.levels is not None:
+            if e.gestureType() == Qt.ZoomNativeGesture:
+                self._zoom(1.0 / max(0.2, 1.0 + e.value()), e.position().x())
+                return True
+            if e.gestureType() == Qt.SmartZoomNativeGesture:
+                self._zoom_all()
+                return True
+        return super().event(e)
+
+    def wheelEvent(self, e):
+        """Trackpad: two-finger swipe sideways = pan, up/down = smooth zoom. The first movement of a
+        gesture decides which (axis lock until the gesture ends), so a slightly diagonal swipe does
+        not do both. Mouse wheel: zoom one step per notch, Shift + wheel = pan."""
+        if self.levels is None:
+            return
+        x = e.position().x()
+        pd = e.pixelDelta()
+        trackpad = not pd.isNull() or e.phase() != Qt.NoScrollPhase
+        now = time.monotonic()
+        if e.phase() == Qt.ScrollBegin or now - self._last_wheel > 0.3:
+            self._axis, self._axis_acc = None, (0.0, 0.0)
+        self._last_wheel = now
+        if trackpad:
+            dx, dy = (pd.x(), pd.y()) if not pd.isNull() else (e.angleDelta().x() / 8, e.angleDelta().y() / 8)
+            if self._axis is None:
+                ax, ay = self._axis_acc[0] + abs(dx), self._axis_acc[1] + abs(dy)
+                self._axis_acc = (ax, ay)
+                if ax + ay < 6:            # not enough movement yet to tell the direction
+                    return
+                self._axis = "pan" if ax > ay else "zoom"
+            if self._axis == "pan":
+                self._pan(dx)
+            else:
+                self._zoom(float(np.exp(-dy * 0.006)), x)
+            if e.phase() == Qt.ScrollEnd:
+                self._axis = None
+            return
+        dy, dx = e.angleDelta().y(), e.angleDelta().x()
+        if e.modifiers() & Qt.ShiftModifier or (dx and not dy):
+            self._pan((dx or dy) / 120 * self.width() * 0.1)
+        else:
+            self._zoom(0.8 ** (dy / 120), x)
 
     def contextMenuEvent(self, e):
         if self.levels is None:
