@@ -9,17 +9,25 @@ from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QSizePolicy, QWidget
 
 from ..analysis import KIND_LABEL, MIX, MUSIC, SPEECH, Segment
+from .style import C
 
-COL_SPEECH = QColor(70, 130, 220, 70)
-COL_MUSIC = QColor(235, 160, 40, 90)
-COL_MIX = QColor(150, 90, 200, 80)
+
+def _c(hexcol: str, alpha: int = 255) -> QColor:
+    q = QColor(hexcol)
+    q.setAlpha(alpha)
+    return q
+
+
+COL_SPEECH = _c(C.speech, 46)
+COL_MUSIC = _c(C.music, 46)
+COL_MIX = _c(C.mix, 52)
 KIND_COL = {SPEECH: COL_SPEECH, MUSIC: COL_MUSIC, MIX: COL_MIX}
-COL_WAVE = QColor(60, 60, 70)
-COL_SEL = QColor(40, 170, 120, 70)
-COL_HEAD = QColor(220, 40, 60)
-COL_REF = QColor(30, 160, 90)
-COL_WAVE_OFF = QColor(165, 165, 170)        # waveform outside the In/Out range
-COL_TRIM = QColor(235, 130, 20)            # In/Out markers
+COL_WAVE = _c(C.wave)
+COL_SEL = _c("#ffffff", 34)
+COL_HEAD = _c("#ffffff", 235)
+COL_REF = _c(C.good)
+COL_WAVE_OFF = _c(C.faint)                  # waveform outside the In/Out range
+COL_TRIM = _c(C.accent)                     # In/Out markers
 
 
 def fmt(t: float) -> str:
@@ -94,7 +102,7 @@ class Timeline(QWidget):
         p.fillRect(self.rect(), self.palette().base())
         if self.levels is None:
             p.setPen(self.palette().placeholderText().color())
-            p.drawText(self.rect(), Qt.AlignCenter, "Audiodatei hierher ziehen oder „Öffnen…“ wählen")
+            p.drawText(self.rect(), Qt.AlignCenter, "Drop an audio file or a project here, or choose “Open…”")
             return
         a, b = self.view
         lane = 18
@@ -108,7 +116,7 @@ class Timeline(QWidget):
             solid.setAlpha(230)
             p.fillRect(QRectF(x0, 0, x1 - x0, lane - 2), solid)
             if s.manual:
-                p.fillRect(QRectF(x0, lane, x1 - x0, h - lane), QBrush(QColor(0, 0, 0, 40), Qt.BDiagPattern))
+                p.fillRect(QRectF(x0, lane, x1 - x0, h - lane), QBrush(QColor(255, 255, 255, 28), Qt.BDiagPattern))
             if x1 - x0 > 60:
                 p.setPen(Qt.white)
                 p.drawText(QRectF(x0 + 4, 0, x1 - x0 - 8, lane - 2), Qt.AlignVCenter | Qt.AlignLeft,
@@ -181,7 +189,7 @@ class Timeline(QWidget):
             p.fillRect(QRectF(r0, h - 24, max(2.0, r1 - r0), 4), COL_REF)
             if r1 - r0 > 90:
                 p.setPen(COL_REF)
-                p.drawText(QRectF(r0 + 2, h - 40, r1 - r0, 14), Qt.AlignLeft, "Klangreferenz")
+                p.drawText(QRectF(r0 + 2, h - 40, r1 - r0, 14), Qt.AlignLeft, "Tone reference")
         p.setPen(QPen(COL_HEAD, 2))
         xh = self._x(self.head)
         p.drawLine(QPointF(xh, 0), QPointF(xh, h))
@@ -370,38 +378,38 @@ class Timeline(QWidget):
                 return
             s0, s1 = seg.start, seg.end
         m = QMenu(self)
-        for label, kind in (("Als Sprache behandeln", SPEECH), ("Als Musik behandeln", MUSIC),
-                            ("Als Sprache + Musik behandeln", MIX)):
+        for label, kind in (("Treat as speech", SPEECH), ("Treat as music", MUSIC),
+                            ("Treat as speech + music", MIX)):
             act = QAction(f"{label}  ({fmt(s0)} – {fmt(s1)})", m)
             act.triggered.connect(lambda _=False, k=kind: self.relabel.emit(s0, s1, k))
             m.addAction(act)
         m.addSeparator()
-        act = QAction(f"Als Klangreferenz für die Stimme verwenden  ({fmt(s0)} – {fmt(s1)})", m)
+        act = QAction(f"Use as tone reference for the voice  ({fmt(s0)} – {fmt(s1)})", m)
         act.triggered.connect(lambda: self.tone_ref.emit(s0, s1))
         m.addAction(act)
         if self.ref:
-            act = QAction("Klangreferenz: automatisch (trockenste Stellen)", m)
+            act = QAction("Tone reference: automatic (driest parts)", m)
             act.triggered.connect(lambda: self.tone_ref.emit(-1.0, -1.0))
             m.addAction(act)
         m.addSeparator()
         cur0, cur1 = self.trim or (0.0, self.duration)
-        for label, rng in ((f"Anfang hier setzen  ({fmt(t_mouse)})", (t_mouse, cur1)),
-                           (f"Ende hier setzen  ({fmt(t_mouse)})", (cur0, t_mouse))):
+        for label, rng in ((f"Set In here  ({fmt(t_mouse)})", (t_mouse, cur1)),
+                           (f"Set Out here  ({fmt(t_mouse)})", (cur0, t_mouse))):
             act = QAction(label, m)
             act.setEnabled(rng[1] - rng[0] >= 0.5)
             act.triggered.connect(lambda _=False, r=rng: self.trim_changed.emit(*r))
             m.addAction(act)
         if self.sel[1] - self.sel[0] >= 0.5:
             a, b = self.sel
-            act = QAction(f"Auf Auswahl zuschneiden  ({fmt(a)} – {fmt(b)})", m)
+            act = QAction(f"Trim to selection  ({fmt(a)} – {fmt(b)})", m)
             act.triggered.connect(lambda: self.trim_changed.emit(a, b))
             m.addAction(act)
         if self.trim:
-            act = QAction("Zuschnitt aufheben", m)
+            act = QAction("Remove trim", m)
             act.triggered.connect(lambda: self.trim_changed.emit(-1.0, -1.0))
             m.addAction(act)
         m.addSeparator()
-        zoom = QAction("Ganze Datei anzeigen", m)
+        zoom = QAction("Show whole file", m)
         zoom.triggered.connect(self._zoom_all)
         m.addAction(zoom)
         m.exec(e.globalPos())

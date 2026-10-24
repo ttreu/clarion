@@ -22,26 +22,26 @@ def test_load_resamples_to_48k_stereo(tmp_path):
 def test_end_to_end_with_fake_ai(reading_file, tmp_path, no_dfn):
     src, music = reading_file
     proj = Project(src, workdir=tmp_path / "work")
-    proj.prepare(PRESETS["Natürlich"])
+    proj.prepare(PRESETS["Natural"])
     found = [s for s in proj.segments if s.kind == MUSIC]
     assert len(found) == 1
     assert abs(found[0].start - 10) < 1.0 and abs(found[0].end - 20) < 1.5
 
-    out = proj.export(PRESETS["Natürlich"], tmp_path / "out.wav")
+    out = proj.export(PRESETS["Natural"], tmp_path / "out.wav")
     y, sr = sf.read(out)
     assert sr == SR and sf.info(out).subtype == "PCM_24"
     assert len(y) == 30 * SR
     assert np.isfinite(y).all()
     from klangrestaurator import dynamics
-    assert abs(dynamics.loudness(y) - PRESETS["Natürlich"].loudness_target) < 1.0   # default: LUFS target
+    assert abs(dynamics.loudness(y) - PRESETS["Natural"].loudness_target) < 1.0   # default: LUFS target
     assert 20 * np.log10(np.abs(y).max()) <= -1.0 + 1e-3
-    out = proj.export(PRESETS["Natürlich"].with_(loudness_target=None), tmp_path / "peak.wav")
+    out = proj.export(PRESETS["Natural"].with_(loudness_target=None), tmp_path / "peak.wav")
     y, _ = sf.read(out)
     assert abs(20 * np.log10(np.abs(y).max()) - (-1.0)) < 0.1                       # peak mode as before
 
     # cached: second prepare must not re-run the AI
     proj2 = Project(src, workdir=tmp_path / "work")
-    proj2.prepare(PRESETS["Natürlich"])
+    proj2.prepare(PRESETS["Natural"])
     assert len(proj2.segments) == len(proj.segments)
 
 
@@ -49,10 +49,10 @@ def test_preview_and_keep_rate(reading_file, tmp_path, no_dfn):
     src, _ = reading_file
     proj = Project(src, workdir=tmp_path / "work")
     proj.prepare()
-    a, b = proj.write_preview(PRESETS["Natürlich"], 8, 12)
+    a, b = proj.write_preview(PRESETS["Natural"], 8, 12)
     assert sf.info(a).duration == pytest.approx(4, abs=0.01)
     assert sf.info(b).duration == pytest.approx(4, abs=0.01)
-    out = proj.export(PRESETS["Sanft"], tmp_path / "o44.wav", out_sr=44_100)
+    out = proj.export(PRESETS["Gentle"], tmp_path / "o44.wav", out_sr=44_100)
     assert sf.info(out).samplerate == 44_100
 
 
@@ -63,7 +63,7 @@ def test_real_deepfilternet(reading_file, tmp_path):
     src, _ = reading_file
     proj = Project(src, workdir=tmp_path / "work")
     proj.prepare()
-    y = proj.render(PRESETS["Natürlich"], 0, 5)
+    y = proj.render(PRESETS["Natural"], 0, 5)
     assert np.isfinite(y).all()
 
 
@@ -73,7 +73,7 @@ def test_mix_segment_is_voice_plus_share_of_music(reading_file, no_dfn):
     proj = Project(path)
     proj.prepare()
     lvl = lambda x: 10 * np.log10((x ** 2).mean())  # noqa: E731
-    st = PRESETS["Natürlich"].with_(tone_match=0.0, level_match=0.0)   # check the mix formula alone
+    st = PRESETS["Natural"].with_(tone_match=0.0, level_match=0.0)   # check the mix formula alone
     y_music = proj.render(st, 12, 18)          # 10–20 s is detected as music
     proj.set_kind(10, 20, SPEECH)              # as plain speech the AI wipes the music
     y_speech = proj.render(st, 12, 18)
@@ -93,7 +93,7 @@ def test_adjacent_music_and_mix_are_not_denoised_twice(reading_file, no_dfn):
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
-    st = PRESETS["Natürlich"].with_(mix_music=1.0)
+    st = PRESETS["Natural"].with_(mix_music=1.0)
     ref = proj.render(st, 14.5, 15.5)          # inside one music section
     proj.set_kind(15, 20, MIX)                 # music 10–15 | mix 15–20, boundary at 15 s
     y = proj.render(st.with_(mix_fade_s=0.01), 14.5, 14.9)  # just before the boundary: still music
@@ -106,11 +106,11 @@ def test_export_hits_loudness_target_under_limiter(reading_file, no_dfn, tmp_pat
     proj = Project(path)
     proj.prepare()
     dest = tmp_path / "out.wav"
-    proj.export(PRESETS["Natürlich"].with_(loudness_target=-16.0), dest)
+    proj.export(PRESETS["Natural"].with_(loudness_target=-16.0), dest)
     y, sr = sf.read(dest, dtype="float32")
     assert abs(dynamics.loudness(y) - (-16.0)) < 1.0
     assert np.abs(y).max() <= 10 ** (-1 / 20) + 1e-3
-    a, b = proj.write_preview(PRESETS["Natürlich"].with_(loudness_target=-16.0), 0, 30)
+    a, b = proj.write_preview(PRESETS["Natural"].with_(loudness_target=-16.0), 0, 30)
     yb, _ = sf.read(b, dtype="float32")
     assert abs(dynamics.loudness(yb) - (-16.0)) < 1.5          # preview: estimate of the export level
 
@@ -120,7 +120,7 @@ def test_normalize_switch_off_restores_old_behaviour(reading_file, no_dfn, tmp_p
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
-    on = PRESETS["Natürlich"]
+    on = PRESETS["Natural"]
     off = on.with_(normalize=False)
     assert off.effective().loudness_target is None and on.effective() is on
     y, _ = sf.read(proj.export(off, tmp_path / "off.wav"))
@@ -134,7 +134,7 @@ def test_trim_limits_export_with_soft_edges(reading_file, no_dfn, tmp_path):
     path, _ = reading_file
     proj = Project(path)
     proj.prepare()
-    st = PRESETS["Sanft"].with_(normalize=False)     # fast (no WPE)
+    st = PRESETS["Gentle"].with_(normalize=False)     # fast (no WPE)
     proj.set_trim((5.0, 12.5))
     assert proj.trim == (5.0, 12.5)
     y, _ = sf.read(proj.export(st, tmp_path / "cut.wav"))
@@ -163,7 +163,7 @@ def test_loud_music_is_capped_above_the_loudness_target(tmp_path, no_dfn):
     sf.write(path, x * 0.2, sr, subtype="PCM_16")
     proj = Project(path)
     proj.prepare()
-    st = PRESETS["Sanft"].with_(loudness_target=-16.0)        # fast (no WPE)
+    st = PRESETS["Gentle"].with_(loudness_target=-16.0)        # fast (no WPE)
     y, _ = sf.read(proj.export(st, tmp_path / "out.wav"), dtype="float32")
     y_off, _ = sf.read(proj.export(st.with_(music_ceiling_lu=None), tmp_path / "off.wav"), dtype="float32")
     mus = slice(int(12 * SR), int(18 * SR))

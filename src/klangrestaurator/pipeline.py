@@ -76,8 +76,8 @@ class Project:
         f_meta = self.dir / "meta.json"
 
         if not (f_orig.exists() and f_meta.exists()):
-            p("Datei einlesen", 0)
-            audio_io.load_to_memmap(self.source, f_orig, progress=lambda v: p("Datei einlesen", v))
+            p("Reading file", 0)
+            audio_io.load_to_memmap(self.source, f_orig, progress=lambda v: p("Reading file", v))
             sr_in, ch, _ = audio_io.probe(self.source)
             orig = np.load(f_orig, mmap_mode="r")
             peak = max(float(np.abs(orig[s:s + BLOCK_S * SR]).max()) for s in range(0, len(orig), BLOCK_S * SR))
@@ -88,12 +88,12 @@ class Project:
         self._check(cancel)
 
         if not f_enh.exists():
-            p("KI-Entrauschung (DeepFilterNet)", 0)
-            dfn.ensure_binary(progress=lambda v: p("KI-Modell herunterladen", v))
+            p("AI denoising (DeepFilterNet)", 0)
+            dfn.ensure_binary(progress=lambda v: p("Downloading AI model", v))
             tmp = self.dir / "enh.partial.npy"
             out = np.lib.format.open_memmap(tmp, "w+", np.float32, self.orig.shape)
             try:
-                dfn.enhance(self.orig, out, progress=lambda v: p("KI-Entrauschung (DeepFilterNet)", v),
+                dfn.enhance(self.orig, out, progress=lambda v: p("AI denoising (DeepFilterNet)", v),
                             cancel=cancel)
             except InterruptedError:
                 del out
@@ -114,17 +114,17 @@ class Project:
 
         f_vb = self.dir / "voice_bands.npy"
         if not f_vb.exists():
-            p("Klang analysieren", 0.5)
+            p("Analysing tone", 0.5)
             np.save(f_vb, self._compute_voice_bands(cancel))
         self.voice_bands = np.load(f_vb)
 
         if reclassify or not f_seg.exists():
-            p("Sprache / Musik erkennen", 0.5)
+            p("Detecting speech / music", 0.5)
             self.segments = analysis.classify(self.levels, np.load(f_elev), settings)
             self.save_segments()
         else:
             self.segments = analysis.load_segments(f_seg)
-        p("Analyse fertig", 1)
+        p("Analysis done", 1)
 
     def _compute_voice_bands(self, cancel: Cancel = None) -> np.ndarray:
         """Band powers of the stereo-linked AI voice, blockwise over the whole file."""
@@ -159,7 +159,7 @@ class Project:
         if self.duration:
             b = min(b, self.duration)
         if b - a < 0.5:
-            raise ValueError("Der Bereich muss mindestens 0,5 s lang sein")
+            raise ValueError("the range must be at least 0.5 s long")
         f.write_text(json.dumps([a, b]))
 
     # ------------------------------------------------------------------ tone matching
@@ -235,7 +235,7 @@ class Project:
                progress: Progress = None, cancel: Cancel = None) -> np.ndarray:
         """Render [start_s, end_s) into a float32 array (memmap for long ranges)."""
         settings = settings.effective()
-        assert self.orig is not None and self.enh is not None, "prepare() zuerst aufrufen"
+        assert self.orig is not None and self.enh is not None, "call prepare() first"
         p = progress or (lambda *_: None)
         N = len(self.orig)
         A = max(0, int(start_s * SR))
@@ -282,7 +282,7 @@ class Project:
             else:
                 out[s - A:e - A] = mu
             step += 1
-            p("Restaurieren", step / steps)
+            p("Restoring", step / steps)
 
         # music: add the spectral noise reduction on top of the plain high-passed signal (M = music chain).
         # speech + music: dry AI voice + mix_music · M'  (like the speech chain, but with a large share of
@@ -320,7 +320,7 @@ class Project:
                 wm = analysis.kind_mask(segs, MIX, b - a, settings.mix_fade_s, start=a)[:, None]
                 out[a - A:b - A] += wm * (v + settings.mix_music * ym - y)
             step += 1
-            p("Restaurieren", step / steps)
+            p("Restoring", step / steps)
         return out
 
     def output_gain(self, rendered: np.ndarray, settings: Settings) -> float:
@@ -416,7 +416,7 @@ class Project:
         if settings.loudness_target is None:   # peak normalisation only (as before)
             g, lim = self.output_gain(y, settings), None
         else:                                  # loudness normalisation (+ music ceiling) + limiter
-            p("Lautheit messen", 0.86)
+            p("Measuring loudness", 0.86)
             g = self._db_gain(settings.loudness_target, dynamics.loudness(y), self.output_gain(y, settings))
             if settings.music_ceiling_lu is not None:
                 # turn down music that would end up too loud; the gain stays as measured before, so
@@ -425,10 +425,10 @@ class Project:
                 self._tame_music(y, start_s, g, settings)
             lim = dynamics.Limiter(settings.limiter_db)
         audio_io.write_wav(y, SR, dest, gain=g, out_sr=out_sr, subtype=subtype, limiter=lim,
-                           progress=lambda v: p("Datei schreiben", 0.9 + 0.1 * min(1, v)))
+                           progress=lambda v: p("Writing file", 0.9 + 0.1 * min(1, v)))
         del y
         (self.dir / "render.npy").unlink(missing_ok=True)
-        p("Fertig", 1)
+        p("Done", 1)
         return dest
 
     def write_preview(self, settings: Settings, start_s: float, end_s: float,
@@ -443,7 +443,7 @@ class Project:
         tmp.mkdir(exist_ok=True)
         a, b = int(start_s * SR), int(min(self.duration, end_s) * SR)
         tag = f"_{slot}" if slot else ""
-        f_o, f_r = tmp / f"A_original{tag}.wav", tmp / f"B_restauriert{tag}.wav"
+        f_o, f_r = tmp / f"A_original{tag}.wav", tmp / f"B_restored{tag}.wav"
         y = self.render(settings, start_s, end_s, cancel=cancel)
         if settings.loudness_target is None:
             # the export normalises the whole render's peak; estimate its gain from how much the
@@ -485,5 +485,4 @@ def _fade_edges(y: np.ndarray, n: int) -> None:
 
 def default_output_name(source: Path, preset_name: str = "") -> Path:
     tag = f"_{preset_name.lower()}" if preset_name else ""
-    tag = tag.replace("ü", "ue").replace("ä", "ae").replace("ö", "oe")
-    return source.with_name(f"{source.stem}_restauriert{tag}.wav")
+    return source.with_name(f"{source.stem}_restored{tag}.wav")

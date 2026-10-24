@@ -74,7 +74,7 @@ def load(path: Path) -> Loaded:
     path = Path(path)
     data = json.loads(path.read_text())
     if data.get("format") != FORMAT:
-        raise ValueError(f"{path.name} ist keine Klangrestaurator-Projektdatei")
+        raise ValueError(f"{path.name} is not a project file of this app")
     if int(data.get("version", 0)) > VERSION:
-        raise ValueError(f"{path.name} stammt von einer neueren Programmversion")
+        raise ValueError(f"{path.name} was written by a newer version")
     return Loaded(data, path)

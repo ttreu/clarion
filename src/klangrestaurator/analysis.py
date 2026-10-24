@@ -18,7 +18,7 @@ from .settings import SR, Settings
 FRAME = SR // 4  # 0.25 s analysis frames
 SPEECH, MUSIC, MIX = "speech", "music", "mix"
 # SPEECH → speech chain (AI); MUSIC → music chain (gentle NR); MIX → music chain + some dry AI voice
-KIND_LABEL = {SPEECH: "Sprache", MUSIC: "Musik", MIX: "Sprache + Musik"}
+KIND_LABEL = {SPEECH: "Speech", MUSIC: "Music", MIX: "Speech + Music"}
 
 
 @dataclass

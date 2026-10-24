@@ -1,7 +1,8 @@
-# CLAUDE.md – Klangrestaurator
+# CLAUDE.md – clarion (repo/package: klangrestaurator)
 
-Mac desktop app (Python + PySide6) for restoring recordings where **speech and music alternate**
-(readings with cello, lectures with interludes). The user is German-speaking; UI text and user-facing docs are German,
+Mac desktop app **clarion** (always lowercase) (Python + PySide6; display name `APP_NAME` in `__init__.py`, internal names stay
+"klangrestaurator" so caches/prefs survive) for restoring recordings where **speech and music alternate**
+(readings with cello, lectures with interludes). The user is German-speaking (talk to them in German); the app's UI text is English,
 code and comments are English.
 
 ## Commands
@@ -13,7 +14,7 @@ uv run klangrestaurator-cli FILE.wav      # CLI, see --help
 uv run pytest -q                          # tests (fast ones use a fake AI; one test runs the real binary)
 uv run pytest -q -m "not slow"            # offline
 uvx ruff check src tests                  # lint
-./scripts/build_app.sh                    # PyInstaller → dist/Klangrestaurator.app
+./scripts/build_app.sh                    # PyInstaller → dist/clarion.app
 ```
 
 Env vars: `KLANGRESTAURATOR_DEEPFILTER=/path/to/deep-filter` (use a local binary instead of downloading),
@@ -49,7 +50,7 @@ export: loudness normalise to loudness_target LUFS (BS.1770, blockwise) → musi
    short-term loudness of MUSIC sections capped at target + 3 LU, smooth ~2 s ramps; gain is NOT re-measured
    afterwards, or the cap would be undone) → look-ahead limiter at −1 dBFS, release 400 ms
    (dynamics.Limiter, stateful across blocks) → 24-bit WAV via audio_io.StreamWriter (seamless resampling with
-   context). Settings.normalize off (GUI group checkbox „Lautheit“, CLI --no-normalize) → old peak normalisation.
+   context). Settings.normalize off (GUI group checkbox "Loudness", CLI --no-normalize) → old peak normalisation.
    Tried and dropped (no audible benefit in a blind listening comparison on 02.WAV, see git history): a voice
    compressor, and a mastering stage (EQ + 3-band compression; without a make-up gate it lifted pause noise by
    12–16 dB).
@@ -68,7 +69,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 
 ## Layout
 
-- `src/klangrestaurator/settings.py` – `Settings` dataclass + `PRESETS` (Natürlich / Kräftig / Sanft)
+- `src/klangrestaurator/settings.py` – `Settings` dataclass + `PRESETS` (Natural / Strong / Gentle; old German names map via `preset_name`)
 - `audio_io.py` – decode to 48 kHz memmap (soundfile; ffmpeg fallback for m4a etc.), blockwise WAV writer
 - `dfn.py` – downloads/locates DeepFilterNet3 Rust binary (GitHub release v0.5.6), chunked `enhance()`
 - `analysis.py` – frame levels, `classify()`: speech/music, then `detect_mix()` (speech whose word gaps stay
@@ -90,8 +91,10 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   `prepare()`, `render()`, `export()`, `write_preview()`
 - `project_file.py` – `.klang` projects (JSON): source (absolute + relative), sections, trim, tone ref, all
   Settings, GUI choices; opening one re-runs/uses the cached analysis, then applies the user's decisions
-- `cli.py` – CLI; `gui/app.py` main window (settings grouped: Klangverbesserung Sprache / Musik / Sprache + Musik | Lautheit
-  (checkable group: LUFS target) | Ausgabe); `gui/timeline.py` level + segment view (click/drag/right-click/zoom; dragging a section boundary
+- `gui/style.py` – dark studio theme (colours in `C`, stylesheet, palette) + vector transport icons; `gui/meter.py`
+  – stereo level meter fed from the file being played (`_feed_meter`, last 40 ms before the play position)
+- `cli.py` – CLI; `gui/app.py` main window (settings grouped: Speech / Music / Speech + Music | Loudness
+  (checkable group: LUFS target) | Output); `gui/timeline.py` level + segment view (click/drag/right-click/zoom; dragging a section boundary
   ±5 px → `analysis.move_boundary`, both neighbours become manual);
   `gui/worker.py` QThread jobs with progress + cancel
 - `tests/` – synthetic "reading" (bursty noise speech + harmonic cello) with a fake AI; one slow test with the real binary
@@ -99,17 +102,17 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 ## Conventions / gotchas
 
 - Internal rate is always 48 kHz (DeepFilterNet requirement). Don't add resampling inside chains.
-- Segment kinds: `speech`, `music`, `mix` (= "Sprache + Musik"). Labels in `analysis.KIND_LABEL`.
+- Segment kinds: `speech`, `music`, `mix` (= "Speech + Music"). Labels in `analysis.KIND_LABEL`.
 - Variants (settings.SPEECH_/MUSIC_/MIX_VARIANTS, letters = the listening-test samples) are global per project;
-  the GUI drop-downs set the sliders, any manual change shows "Benutzerdefiniert"; presets are built from them.
+  the GUI drop-downs set the sliders, any manual change shows "Custom"; presets are built from them.
 - Timeline navigation: trackpad pinch = zoom, two-finger swipe sideways = pan, up/down = smooth zoom; the first
   movement locks the axis until the gesture ends. Mouse wheel = zoom step, Shift + wheel = pan.
-- Trim (Anfang/Ende): `Project.trim` (trim.json), set by dragging the In/Out markers (below the section band;
+- Trim (start/end): `Project.trim` (trim.json), set by dragging the In/Out markers (below the section band;
   in the band, boundaries win), right-click or I/O at the playhead; outside the range the waveform is grey; export uses it
   when no explicit range is given and fades 20 ms at cut edges. Analysis still covers the whole file.
 - Before the first preview the transport plays the original source file (`_orig_only`, files_ab = (source,
   None), range = whole file); B is disabled and no automatic preview runs in that mode.
-- Cache invalidation is by path+size+mtime. Changing the analysis algorithm → use "Erkennung neu berechnen"
+- Cache invalidation is by path+size+mtime. Changing the analysis algorithm → use "Re-detect Speech/Music"
   (reclassify) or delete the cache folder; `enh.npy` only depends on the source.
 - Manually corrected segments have `manual=True`; reclassify overwrites them (by design for now).
 - Long jobs must check `cancel()` between blocks and raise `Cancelled`.
@@ -122,8 +125,8 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   with `.venv` as a symlink to it. If it was recreated as a plain dir: `rm -rf .venv && mkdir .venv.nosync &&
   ln -s .venv.nosync .venv && uv sync`.
 - Origin: this replicates a manual restoration of two Zoom recordings (Ingeborg-Bachmann reading with cello)
-  that was judged good; "Natürlich" is the preset that was chosen. Its speech setting was later raised
-  from 20 dB to 40 dB + WPE by listening tests (old behaviour ≈ "Sanft").
+  that was judged good; "Natural" (formerly "Natürlich") is the preset that was chosen. Its speech setting was later raised
+  from 20 dB to 40 dB + WPE by listening tests (old behaviour ≈ "Gentle").
 
 ## Ideas / roadmap
 

@@ -1,4 +1,4 @@
-"""Tone and level matching for the voice ("Klang angleichen", "Lautstärke angleichen").
+"""Tone and level matching for the voice ("Match tone", "Match level").
 
 When a speaker moves (close to the PA microphone → the recorder hears mostly the loudspeaker: boomy
 and harsh; normal position → direct voice), the voice's long-term spectrum changes a lot. This module

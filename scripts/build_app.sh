@@ -1,14 +1,14 @@
 #!/bin/bash
-# Baut dist/Klangrestaurator.app (unsigniert). Beim ersten Öffnen: Rechtsklick → Öffnen.
+# Builds dist/clarion.app (unsigned). First launch: right-click → Open.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 uv sync --extra build
 uv run pyinstaller --noconfirm --windowed \
-  --name Klangrestaurator \
-  --osx-bundle-identifier com.klangrestaurator.app \
+  --name clarion \
+  --osx-bundle-identifier com.clarion.app \
   --collect-submodules noisereduce \
   --collect-submodules nara_wpe \
   --collect-data soundfile \
   --paths src \
   packaging/launch.py
-echo "Fertig: dist/Klangrestaurator.app"
+echo "Done: dist/clarion.app"

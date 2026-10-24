@@ -20,7 +20,7 @@ class Settings:
     speech_stereo_link: bool = True
     """Apply the AI's suppression with one gain for both channels (stops the voice drifting L/R)."""
 
-    # --- speech + music ("Sprache + Musik") ---------------------------------
+    # --- speech + music ---------------------------------
     mix_music: float = 0.5
     """Speech + music = dry AI voice + this share of the gently denoised original (music chain).
     Lower: drier voice, less noise, quieter music. Higher: more music, more room sound and noise."""
@@ -37,7 +37,7 @@ class Settings:
     min_switch_s: float = 6.0
     """Automatic sections shorter than this are merged into a neighbour (no rapid switching)."""
 
-    # --- tone matching ("Klang angleichen") ---------------------------------
+    # --- tone matching ("Match tone") ---------------------------------
     tone_match: float = 0.7
     """0..1: how far the voice's timbre is pulled towards the reference (driest parts or a chosen range).
     Evens out changes of microphone position, e.g. close to the PA (boomy, harsh) vs. normal."""
@@ -111,22 +111,22 @@ SPEECH_VARIANTS: list[tuple[str, str, dict]] = [
     ("A", "20 dB", dict(speech_reduction_db=20.0, speech_dereverb=False)),
     ("B", "25 dB", dict(speech_reduction_db=25.0, speech_dereverb=False)),
     ("C", "30 dB", dict(speech_reduction_db=30.0, speech_dereverb=False)),
-    ("D", "25 dB + Hallreduktion", dict(speech_reduction_db=25.0, speech_dereverb=True)),
-    ("E", "40 dB + Hallreduktion", dict(speech_reduction_db=40.0, speech_dereverb=True)),
+    ("D", "25 dB + dereverb", dict(speech_reduction_db=25.0, speech_dereverb=True)),
+    ("E", "40 dB + dereverb", dict(speech_reduction_db=40.0, speech_dereverb=True)),
 ]
 _M = dict(music_nstd=1.5, music_pass2=0.0, music_gate=False, music_hiss_db=0.0)
 MUSIC_VARIANTS: list[tuple[str, str, dict]] = [
     ("A", "70 %", {**_M, "music_reduction": 0.70}),
     ("B", "95 %", {**_M, "music_reduction": 0.95}),
-    ("C", "95 %, höhere Schwelle", {**_M, "music_reduction": 0.95, "music_nstd": 2.0}),
-    ("D", "85 % + Hochton −6 dB", {**_M, "music_reduction": 0.85, "music_hiss_db": -6.0}),
-    ("E", "zweistufig 85 % + 60 %", {**_M, "music_reduction": 0.85, "music_pass2": 0.6}),
-    ("F", "95 % + Pausen-Absenkung", {**_M, "music_reduction": 0.95, "music_gate": True}),
+    ("C", "95 %, higher threshold", {**_M, "music_reduction": 0.95, "music_nstd": 2.0}),
+    ("D", "85 % + treble −6 dB", {**_M, "music_reduction": 0.85, "music_hiss_db": -6.0}),
+    ("E", "two passes 85 % + 60 %", {**_M, "music_reduction": 0.85, "music_pass2": 0.6}),
+    ("F", "95 % + gap reduction", {**_M, "music_reduction": 0.95, "music_gate": True}),
 ]
 MIX_VARIANTS: list[tuple[str, str, dict]] = [
-    ("A", "Musikanteil 25 %", dict(mix_music=0.25)),
-    ("B", "Musikanteil 50 %", dict(mix_music=0.5)),
-    ("C", "Musikanteil 75 %", dict(mix_music=0.75)),
+    ("A", "music share 25 %", dict(mix_music=0.25)),
+    ("B", "music share 50 %", dict(mix_music=0.5)),
+    ("C", "music share 75 %", dict(mix_music=0.75)),
 ]
 
 
@@ -146,7 +146,16 @@ def _from_variants(speech: str, music: str, mix: str, **extra) -> Settings:
 
 
 PRESETS: dict[str, Settings] = {
-    "Natürlich": _from_variants("E", "D", "B"),
-    "Kräftig": _from_variants("E", "C", "A"),
-    "Sanft": _from_variants("A", "A", "C"),
+    "Natural": _from_variants("E", "D", "B"),
+    "Strong": _from_variants("E", "C", "A"),
+    "Gentle": _from_variants("A", "A", "C"),
 }
+DEFAULT_PRESET = "Natural"
+# names used before the app was translated (stored in preferences and project files)
+_OLD_PRESET_NAMES = {"Natürlich": "Natural", "Kräftig": "Strong", "Sanft": "Gentle"}
+
+
+def preset_name(name: str | None) -> str:
+    """Current preset name for ``name`` (also accepts the old German names)."""
+    name = _OLD_PRESET_NAMES.get(name or "", name or "")
+    return name if name in PRESETS else DEFAULT_PRESET

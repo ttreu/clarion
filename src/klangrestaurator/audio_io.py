@@ -57,7 +57,7 @@ def load_to_memmap(path: Path, dest: Path, progress=None) -> np.memmap:
     if not native:  # decode compressed formats via ffmpeg into a temp wav first
         ff = _ffmpeg()
         if not ff:
-            raise RuntimeError("Für dieses Format wird ffmpeg benötigt (brew install ffmpeg).")
+            raise RuntimeError("This format needs ffmpeg (brew install ffmpeg).")
         tmp = dest.with_suffix(".decode.wav")
         subprocess.run([ff, "-v", "error", "-y", "-i", str(path), "-ar", str(SR), "-c:a", "pcm_f32le", str(tmp)],
                        check=True)

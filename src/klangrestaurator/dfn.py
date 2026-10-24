@@ -36,7 +36,7 @@ def _target() -> str:
         return "aarch64-unknown-linux-gnu" if m in ("arm64", "aarch64") else "x86_64-unknown-linux-musl"
     if sys.platform == "win32":
         return "x86_64-pc-windows-msvc.exe"
-    raise RuntimeError(f"Plattform nicht unterstützt: {sys.platform}/{m}")
+    raise RuntimeError(f"Platform not supported: {sys.platform}/{m}")
 
 
 def app_dir() -> Path:
@@ -84,7 +84,7 @@ def _run_chunk(binary: Path, audio: np.ndarray, workdir: Path, idx: int) -> np.n
     # -D compensates the model delay so output is time-aligned with the input
     r = subprocess.run([str(binary), "-D", "-o", str(outdir), str(src)], capture_output=True, text=True)
     if r.returncode != 0:
-        raise RuntimeError(f"deep-filter fehlgeschlagen: {r.stderr.strip()[-500:]}")
+        raise RuntimeError(f"deep-filter failed: {r.stderr.strip()[-500:]}")
     y, _ = sf.read(outdir / src.name, dtype="float32", always_2d=True)
     src.unlink(missing_ok=True)
     (outdir / src.name).unlink(missing_ok=True)
