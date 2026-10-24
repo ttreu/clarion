@@ -41,14 +41,32 @@ class Job(QObject):
             self.done.emit(res)
 
 
+# Python owns each Job. Using deleteLater on it as well caused a double delete (segfault) once the
+# caller dropped its reference, so we hold (thread, job) here and release finished ones on the GUI
+# thread at the next start().
+_alive: list[tuple[QThread, Job]] = []
+
+
+def _reap() -> None:
+    for pair in [p for p in _alive if p[0].isFinished()]:
+        _alive.remove(pair)
+        pair[0].deleteLater()
+
+
 def start(parent: QObject, fn: Callable[..., Any]) -> tuple[QThread, Job]:
     """Create thread + job; caller connects signals, then calls thread.start()."""
+    _reap()
     th = QThread(parent)
     job = Job(fn)
     job.moveToThread(th)
     th.started.connect(job.run)
     for sig in (job.done, job.failed, job.cancelled):
         sig.connect(th.quit)
-    th.finished.connect(job.deleteLater)
-    th.finished.connect(th.deleteLater)
+    _alive.append((th, job))
     return th, job
+
+
+def wait_all(timeout_ms: int = 10000) -> None:
+    """Block until running jobs have stopped (call after cancelling, e.g. on window close)."""
+    for th, _ in _alive:
+        th.wait(timeout_ms)

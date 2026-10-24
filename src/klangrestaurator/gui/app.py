@@ -403,6 +403,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         if self._job:
             self._job.cancel()
+        worker.wait_all()
         super().closeEvent(e)
 
 
