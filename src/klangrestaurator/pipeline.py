@@ -154,7 +154,8 @@ class Project:
             mu = chains.highpass(o, settings.music_highpass_hz)[s - ps:e - ps]
             if m.max() > 1e-3:
                 sp = chains.speech_chain(o, np.asarray(self.enh[ps:pe]), settings.speech_reduction_db,
-                                         settings.speech_highpass_hz, settings.speech_dereverb)[s - ps:e - ps]
+                                         settings.speech_highpass_hz, settings.speech_dereverb,
+                                         settings.speech_stereo_link)[s - ps:e - ps]
                 out[s - A:e - A] = sp * m + mu * (1 - m)
             else:
                 out[s - A:e - A] = mu
@@ -204,13 +205,18 @@ class Project:
         return dest
 
     def write_preview(self, settings: Settings, start_s: float, end_s: float,
-                      cancel: Cancel = None) -> tuple[Path, Path]:
-        """Render a short range and write (original, restored) WAVs for A/B listening."""
+                      cancel: Cancel = None, slot: int = 0) -> tuple[Path, Path]:
+        """Render a short range and write (original, restored) WAVs for A/B listening.
+
+        ``slot`` picks one of several file pairs, so a player can keep reading the previous preview
+        while the next one is written.
+        """
         g = self.preview_gain(settings)
         tmp = Path(tempfile.gettempdir()) / "klangrestaurator_preview"
         tmp.mkdir(exist_ok=True)
         a, b = int(start_s * SR), int(min(self.duration, end_s) * SR)
-        f_o, f_r = tmp / "A_original.wav", tmp / "B_restauriert.wav"
+        tag = f"_{slot}" if slot else ""
+        f_o, f_r = tmp / f"A_original{tag}.wav", tmp / f"B_restauriert{tag}.wav"
         audio_io.write_wav(self.orig, SR, f_o, start=a, stop=b, gain=g, subtype="PCM_16")
         y = self.render(settings, start_s, end_s, cancel=cancel)
         audio_io.write_wav(y, SR, f_r, gain=g, subtype="PCM_16")

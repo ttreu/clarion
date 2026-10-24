@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -53,6 +55,13 @@ class MainWindow(QMainWindow):
         self._job = None
         self._preview_range: tuple[float, float] | None = None
         self._preview_stale = True
+        self._preview_slot = 0          # alternates 0/1 so the player never reads a file being written
+        self._job_is_preview = False
+        self._refresh_pending = False
+        self._pending_load: tuple[int, bool] | None = None  # (position ms, play) once media is loaded
+        self._pending_armed = False  # set once the new source started loading (see _on_media_status)
+        self._in_set_source = False
+        self._auto_timer = QTimer(self, singleShot=True, interval=400, timeout=self._auto_refresh)
 
         # --- players for A/B -------------------------------------------------
         self.player: QMediaPlayer | None = None  # created lazily (audio init can be slow)
@@ -191,10 +200,24 @@ class MainWindow(QMainWindow):
         self.btn_fwd = btn(QStyle.SP_MediaSeekForward, f"{sec} s vor (→)", lambda: self.skip(SKIP_MS))
         self.btn_loop = QToolButton()
         self.btn_loop.setText("↻")
-        self.btn_loop.setToolTip("Schleife: Vorschau endlos wiederholen (L)")
+        self.btn_loop.setToolTip("Schleife ein/aus (L) · Pfeil: ganze Vorschau oder nur die Auswahl wiederholen")
         self.btn_loop.setCheckable(True)
         self.btn_loop.setChecked(self.prefs.value("loop", False, type=bool))
         self.btn_loop.toggled.connect(self._set_loop)
+        self.btn_loop.setPopupMode(QToolButton.MenuButtonPopup)
+        menu = QMenu(self.btn_loop)
+        grp = QActionGroup(menu)
+        self.act_loop_all = QAction("Ganze Vorschau wiederholen", menu, checkable=True)
+        self.act_loop_sel = QAction("Nur Auswahl wiederholen", menu, checkable=True)
+        for act in (self.act_loop_all, self.act_loop_sel):
+            grp.addAction(act)
+            menu.addAction(act)
+        (self.act_loop_sel if self.prefs.value("loop_mode", "all") == "sel" else self.act_loop_all).setChecked(True)
+        grp.triggered.connect(self._set_loop_mode)
+        self.btn_loop.setMenu(menu)
+        # selection loop: watch the position more often than positionChanged fires
+        self._loop_timer = QTimer(self, interval=10, timeout=self._check_loop)
+        self._loop_seek_until = 0.0
         row.addSpacing(8)
         row.addWidget(self.btn_loop)
         self.transport = (self.btn_start, self.btn_back, self.btn_play, self.btn_stop, self.btn_fwd, self.btn_loop)
@@ -241,8 +264,20 @@ class MainWindow(QMainWindow):
 
     def _mark_stale(self, *_):
         self._preview_stale = True
-        if self.files_ab:
-            self.lbl_prev.setText("Einstellungen geändert – Vorschau neu berechnen")
+        if self._preview_range:
+            self.lbl_prev.setText("Einstellungen geändert – Vorschau wird neu berechnet…")
+            self._auto_timer.start()  # debounce: restarts while a slider is being dragged
+
+    def _auto_refresh(self):
+        """Recompute the current preview range with the new settings, keeping playback going."""
+        if not (self._preview_stale and self._preview_range and self.project):
+            return
+        if self._job:
+            self._refresh_pending = True  # rerun when the current job has ended
+            if self._job_is_preview:
+                self._job.cancel()
+            return
+        self.make_preview(self._preview_range, resume=True)
 
     def _set_busy(self, busy: bool):
         has = self.project is not None and self.project.analysed
@@ -250,15 +285,16 @@ class MainWindow(QMainWindow):
             wdg.setEnabled(has and not busy)
         self.btn_open.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
-        for b in self.transport:
-            b.setEnabled(self.files_ab is not None and not busy)
+        for b in self.transport:  # previews can be listened to while the next one is computed
+            b.setEnabled(self.files_ab is not None and (not busy or self._job_is_preview))
 
     def _progress(self, stage: str, v: float):
         self.progress.setValue(int(v * 1000))
         self.progress.setMaximum(1000)
         self.progress.setFormat(f"{stage}  %p%")
 
-    def _run(self, fn, on_done, label: str):
+    def _run(self, fn, on_done, label: str, preview: bool = False):
+        self._job_is_preview = preview
         th, job = worker.start(self, fn)
         for sig in (job.done, job.failed, job.cancelled):
             sig.connect(self._clear_job)
@@ -273,8 +309,12 @@ class MainWindow(QMainWindow):
 
     def _clear_job(self, *_):
         self._job = None
+        self._job_is_preview = False
         self.progress.reset()
         self.progress.setFormat("")
+        if self._refresh_pending:
+            self._refresh_pending = False
+            QTimer.singleShot(0, self._auto_refresh)
 
     def cancel_job(self):
         if self._job:
@@ -342,6 +382,7 @@ class MainWindow(QMainWindow):
     def _on_selection(self, a: float, b: float):
         if b > a:
             self.statusBar().showMessage(f"Auswahl {fmt(a)} – {fmt(b)} ({b - a:.1f} s)")
+            self._loop_hint()
 
     def _on_seek(self, t: float):
         r = self._preview_range
@@ -349,35 +390,47 @@ class MainWindow(QMainWindow):
             self.player.setPosition(int((t - self._preview_range[0]) * 1000))
 
     # ------------------------------------------------------------------ preview
-    def make_preview(self):
-        if not self.project:
+    def make_preview(self, rng: tuple[float, float] | None = None, resume: bool = False):
+        """Compute a preview for ``rng`` (default: selection, else PREVIEW_S from the cursor).
+
+        With ``resume`` the old preview keeps playing and the new one takes over at the same position.
+        """
+        if not self.project or self._job:
             return
-        a, b = self.timeline.sel
-        if b - a < 1:
-            a = self.timeline.head
-            b = a + PREVIEW_S
-        b = min(b, a + 120, self.project.duration)  # keep previews short, stay inside the file
+        self._auto_timer.stop()
+        if rng:
+            a, b = rng
+        else:
+            a, b = self.timeline.sel
+            if b - a < 1:
+                a = self.timeline.head
+                b = a + PREVIEW_S
+            b = min(b, a + 120, self.project.duration)  # keep previews short, stay inside the file
         st, proj = self.settings(), self.project
-        self._stop()
+        slot = self._preview_slot = 1 - self._preview_slot
+        if not resume:
+            self._stop()
 
         def job(progress, cancel):
             progress("Vorschau berechnen", 0.2)
-            r = proj.write_preview(st, a, b, cancel=cancel)
+            r = proj.write_preview(st, a, b, cancel=cancel, slot=slot)
             progress("Vorschau berechnen", 1)
             return r
 
         def done(files):
+            playing = bool(self.player) and self.player.playbackState() == QMediaPlayer.PlayingState
+            pos = self.player.position() if (resume and self.player) else 0
+            if resume and self._pending_load:  # previous swap still loading: carry its intent over
+                pos, playing = self._pending_load[0], self._pending_load[1] or playing
             self.files_ab = files
             self._preview_range = (a, b)
             self._preview_stale = False
             self.lbl_prev.setText(f"Vorschau {fmt(a)} – {fmt(b)} · Leertaste = Play, Tab = A/B")
             self._set_busy(False)
-            self.statusBar().showMessage(f"Vorschau bereit ({b - a:.0f} s)")
-            self._load_current(0)
-            if self.player:
-                self.player.play()
+            self.statusBar().showMessage("Vorschau aktualisiert" if resume else f"Vorschau bereit ({b - a:.0f} s)")
+            self._load_current(pos, play=playing or not resume)
 
-        self._run(job, done, "Berechne Vorschau…")
+        self._run(job, done, "Aktualisiere Vorschau…" if resume else "Berechne Vorschau…", preview=True)
 
     def _ensure_player(self) -> QMediaPlayer | None:
         if self.player is None and not os.environ.get("KLANGRESTAURATOR_NO_AUDIO"):
@@ -394,22 +447,41 @@ class MainWindow(QMainWindow):
         if self.player:
             self.player.stop()
 
-    def _load_current(self, pos_ms: int):
+    def _load_current(self, pos_ms: int, play: bool = False):
+        """Load the A or B file; seek and (optionally) play once it is loaded, so nothing is heard early."""
         if not self.files_ab or not self._ensure_player():
             return
         f = self.files_ab[0] if self.rb_a.isChecked() else self.files_ab[1]
-        self.player.setSource(QUrl.fromLocalFile(str(f)))
-        if pos_ms:
-            QTimer.singleShot(50, lambda: self.player.setPosition(pos_ms))
+        self._pending_load = (pos_ms, play)
+        # Status signals emitted inside setSource() are unreliable: it reports LoadedMedia for the old
+        # file first, and when called during a load it reports LoadedMedia for the new one right away.
+        # So decide by the status afterwards: still loading -> wait for LoadedMedia, else apply now.
+        self._pending_armed = False
+        self._in_set_source = True
+        try:
+            self.player.setSource(QUrl.fromLocalFile(str(f)))
+        finally:
+            self._in_set_source = False
+        if self.player.mediaStatus() == QMediaPlayer.LoadingMedia:
+            self._pending_armed = True
+        elif self.player.mediaStatus() == QMediaPlayer.LoadedMedia:
+            self._apply_pending_load()
+
+    def _apply_pending_load(self):
+        if self._pending_load is None:
+            return
+        pos, play = self._pending_load
+        self._pending_load = None
+        if pos:
+            self.player.setPosition(pos)
+        if play:
+            self.player.play()
 
     def _switch_ab(self, *_):
         if not self.files_ab or not self.player:
             return
         playing = self.player.playbackState() == QMediaPlayer.PlayingState
-        pos = self.player.position()
-        self._load_current(pos)
-        if playing:
-            self.player.play()
+        self._load_current(self.player.position(), play=playing)
 
     def toggle_play(self):
         if not self.files_ab or not self._ensure_player():
@@ -417,6 +489,9 @@ class MainWindow(QMainWindow):
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
         else:
+            r = self._loop_region()
+            if r and not r[0] <= self.player.position() < r[1]:
+                self._loop_seek(r[0])
             self.player.play()
 
     def stop(self):
@@ -441,15 +516,66 @@ class MainWindow(QMainWindow):
 
     def _set_loop(self, on: bool):
         self.prefs.setValue("loop", on)
+        if on:
+            self._loop_hint()
+
+    def _set_loop_mode(self, act: QAction):
+        self.prefs.setValue("loop_mode", "sel" if act is self.act_loop_sel else "all")
+        self.btn_loop.setChecked(True)  # picking a mode means "loop like this"
+        self._loop_hint()
+
+    def _loop_region(self) -> tuple[int, int] | None:
+        """Selection loop range in ms within the preview file, or None to loop the whole preview."""
+        if not (self.btn_loop.isChecked() and self.act_loop_sel.isChecked() and self._preview_range):
+            return None
+        p0, p1 = self._preview_range
+        a, b = max(self.timeline.sel[0], p0), min(self.timeline.sel[1], p1)
+        if b - a < 0.2:
+            return None
+        return int((a - p0) * 1000), int((b - p0) * 1000)
+
+    def _loop_hint(self):
+        if not (self.btn_loop.isChecked() and self.act_loop_sel.isChecked()):
+            return
+        r = self._loop_region()
+        if r:
+            p0 = self._preview_range[0]
+            self.statusBar().showMessage(f"Schleife über Auswahl {fmt(p0 + r[0] / 1000)} – {fmt(p0 + r[1] / 1000)}")
+        else:
+            self.statusBar().showMessage("Schleife: keine Auswahl innerhalb der Vorschau – "
+                                         "ganze Vorschau wird wiederholt")
+
+    def _loop_seek(self, ms: int):
+        self.player.setPosition(ms)
+        self._loop_seek_until = time.monotonic() + 0.15  # position() lags behind a seek for a moment
+
+    def _check_loop(self):
+        r = self._loop_region()
+        if not r or not self.player or time.monotonic() < self._loop_seek_until:
+            return
+        if not r[0] <= self.player.position() < r[1]:
+            self._loop_seek(r[0])
 
     def _on_media_status(self, status):
+        if self._in_set_source:
+            pass  # see _load_current
+        elif status == QMediaPlayer.LoadingMedia and self._pending_load:
+            self._pending_armed = True
+        elif status == QMediaPlayer.LoadedMedia and self._pending_armed:
+            self._pending_armed = False
+            self._apply_pending_load()
         # Loop by hand: QMediaPlayer.setLoops() keeps repeating for a while after switching it off.
         if status == QMediaPlayer.EndOfMedia and self.btn_loop.isChecked():
-            self.player.setPosition(0)
+            r = self._loop_region()
+            self._loop_seek(r[0] if r else 0)
             self.player.play()
 
     def _on_state(self, state):
         playing = state == QMediaPlayer.PlayingState
+        if playing:
+            self._loop_timer.start()
+        else:
+            self._loop_timer.stop()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause if playing else QStyle.SP_MediaPlay))
 
     def _update_time(self):
