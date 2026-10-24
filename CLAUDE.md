@@ -94,7 +94,9 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 - `gui/style.py` – dark studio theme (colours in `C`, stylesheet, palette) + vector transport icons; `gui/meter.py`
   – stereo level meter fed from the file being played (`_feed_meter`, last 40 ms before the play position)
 - `cli.py` – CLI; `gui/app.py` main window (settings grouped: Speech / Music / Speech + Music | Loudness
-  (checkable group: LUFS target) | Output); `gui/timeline.py` level + segment view (click/drag/right-click/zoom; dragging a section boundary
+  (checkable group: LUFS target) | Output); `gui/timeline.py` waveform + segment view (peak/RMS per 5 ms from `wave.npy` =
+  `analysis.waveform_overview`, real samples when zoomed in, square-root scale, coloured by section, drawn into a
+  cached pixmap; click/drag/right-click/zoom; dragging a section boundary
   ±5 px → `analysis.move_boundary`, both neighbours become manual);
   `gui/worker.py` QThread jobs with progress + cancel
 - `tests/` – synthetic "reading" (bursty noise speech + harmonic cello) with a fake AI; one slow test with the real binary

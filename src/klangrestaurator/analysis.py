@@ -45,6 +45,25 @@ def frame_levels(x: np.ndarray, block_s: int = 60) -> np.ndarray:
     return out
 
 
+WAVE_HOP = 240  # 5 ms bins for the timeline's waveform overview
+
+
+def waveform_overview(x: np.ndarray, block_s: int = 60) -> np.ndarray:
+    """Per 5 ms bin: (peak, rms) of the linear amplitude over both channels, float32 (n, 2).
+
+    Fine enough that the timeline looks smooth when zoomed in, small enough for 1-hour files (~5 MB).
+    """
+    nb = len(x) // WAVE_HOP
+    out = np.empty((nb, 2), np.float32)
+    per = block_s * SR // WAVE_HOP
+    for b in range(0, nb, per):
+        e = min(nb, b + per)
+        blk = np.asarray(x[b * WAVE_HOP:e * WAVE_HOP], dtype=np.float32).reshape(e - b, -1)
+        out[b:e, 0] = np.abs(blk).max(axis=1)
+        out[b:e, 1] = np.sqrt((blk ** 2).mean(axis=1))
+    return out
+
+
 def _runs(flags: np.ndarray):
     out, s = [], 0
     for i in range(1, len(flags) + 1):

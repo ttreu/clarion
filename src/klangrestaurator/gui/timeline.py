@@ -5,10 +5,11 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QAction, QBrush, QColor, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QMenu, QSizePolicy, QWidget
 
-from ..analysis import KIND_LABEL, MIX, MUSIC, SPEECH, Segment
+from ..analysis import KIND_LABEL, MIX, MUSIC, SPEECH, WAVE_HOP, Segment
+from ..settings import SR
 from .style import C
 
 
@@ -18,16 +19,26 @@ def _c(hexcol: str, alpha: int = 255) -> QColor:
     return q
 
 
-COL_SPEECH = _c(C.speech, 46)
-COL_MUSIC = _c(C.music, 46)
-COL_MIX = _c(C.mix, 52)
+COL_SPEECH = _c(C.speech, 26)
+COL_MUSIC = _c(C.music, 26)
+COL_MIX = _c(C.mix, 30)
 KIND_COL = {SPEECH: COL_SPEECH, MUSIC: COL_MUSIC, MIX: COL_MIX}
+# the waveform itself takes the colour of its section, a little lighter than the band
+WAVE_COL = {SPEECH: QColor(C.speech).lighter(120), MUSIC: QColor(C.music),
+            MIX: QColor(C.mix).lighter(115)}
 COL_WAVE = _c(C.wave)
 COL_SEL = _c("#ffffff", 34)
 COL_HEAD = _c("#ffffff", 235)
 COL_REF = _c(C.good)
 COL_WAVE_OFF = _c(C.faint)                  # waveform outside the In/Out range
 COL_TRIM = _c(C.accent)                     # In/Out markers
+
+
+def _disp(v: np.ndarray, ref: float) -> np.ndarray:
+    """Signed amplitude → −1..1 display height. Square-root scale relative to the file's peak: quiet
+    speech stays visible (unlike linear) while the wave keeps its shape (unlike dB, which turns
+    everything into a solid block and squares off waves when zoomed in)."""
+    return np.sign(v) * np.sqrt(np.clip(np.abs(v) / ref, 0.0, 1.0))
 
 
 def fmt(t: float) -> str:
@@ -64,10 +75,27 @@ class Timeline(QWidget):
         self._trim_from: tuple[float, float] | None = None
         self._bound: int | None = None      # index i of the dragged boundary (between segments i and i+1)
         self._bound_from = 0.0
+        self._wave: np.ndarray | None = None  # (peak, rms) linear per bin
+        self._hop = 0.25                     # bin length (s)
+        self.audio: np.ndarray | None = None
+        self._ref = 1.0                      # amplitude shown at full height (file peak + a little room)
+        self._cols_key = None                # cache of the rendered waveform layer (see _wave_layer)
+        self._cols: QPixmap | None = None
 
     # ---------------------------------------------------------------- data
-    def set_data(self, levels: np.ndarray, segments: list[Segment], duration: float) -> None:
+    def set_data(self, levels: np.ndarray, segments: list[Segment], duration: float,
+                 wave: np.ndarray | None = None, audio: np.ndarray | None = None) -> None:
+        """``wave``: (peak, rms) per 5 ms (analysis.waveform_overview); ``audio``: the 48 kHz source
+        for sample-exact drawing when zoomed far in. Without them the 0.25 s levels are drawn."""
         self.levels, self.segments, self.duration = levels, segments, duration
+        if wave is None:
+            lin = (10 ** (np.asarray(levels, np.float32) / 20))[:, None].repeat(2, axis=1)
+            self._wave, self._hop = lin, 0.25
+        else:
+            self._wave, self._hop = np.asarray(wave, np.float32), WAVE_HOP / SR
+        self.audio = audio
+        self._ref = max(float(self._wave[:, 0].max()) if len(self._wave) else 0.0, 1e-4) / 0.96
+        self._cols_key = None
         self.view = (0.0, max(duration, 1.0))
         self.sel = (0.0, 0.0)
         self.update()
@@ -130,42 +158,20 @@ class Timeline(QWidget):
                 p.fillRect(QRectF(x - (2 if active else 1), 0, 4 if active else 2, lane - 2),
                            QColor(255, 255, 255, 255 if active else 200))
 
-        # level envelope (dB mapped -70..0)
+        # waveform: peak (light) and RMS (solid), coloured by section, grey outside In/Out
         t_in, t_out = self.trim or (0.0, self.duration)
         x_in, x_out = self._x(t_in), self._x(t_out)
-        lv = self.levels
-        i0, i1 = max(0, int(a * 4)), min(len(lv), int(b * 4) + 1)
-        path = None
-        if i1 > i0:
-            seg = lv[i0:i1]
-            cols = max(1, w)
-            idx = np.linspace(0, len(seg), cols + 1).astype(int)
-            mx = np.array([seg[idx[k]:max(idx[k] + 1, idx[k + 1])].max() for k in range(cols)])
-            amp = np.clip((mx + 70) / 70, 0, 1) * (h - lane - 6) / 2
-            mid = lane + (h - lane) / 2
-            path = QPainterPath(QPointF(0, mid))
-            for k in range(cols):
-                path.lineTo(k, mid - amp[k])
-            for k in range(cols - 1, -1, -1):
-                path.lineTo(k, mid + amp[k])
-
-        # outside In/Out: wash out the section colours, draw the waveform in grey
         wash = QColor(self.palette().base().color())
         wash.setAlpha(180)
         outside = [r for r in (QRectF(0, 0, max(0.0, x_in), h), QRectF(x_out, 0, max(0.0, w - x_out), h))
                    if r.width() > 0]
         for r in outside:
             p.fillRect(r, wash)
-        if path is not None:
-            p.save()
-            p.setClipRect(QRectF(x_in, 0, max(0.0, x_out - x_in), h))
-            p.fillPath(path, COL_WAVE)
-            p.restore()
-            for r in outside:
-                p.save()
-                p.setClipRect(r)
-                p.fillPath(path, COL_WAVE_OFF)
-                p.restore()
+        mid = lane + (h - lane) / 2
+        half = (h - lane) / 2 - 4
+        p.setPen(QPen(_c(C.line), 1))
+        p.drawLine(QPointF(0, mid), QPointF(w, mid))
+        p.drawPixmap(0, 0, self._wave_layer(w, h, mid, half, x_in, x_out))
 
         s0, s1 = self.sel
         if s1 > s0:
@@ -198,6 +204,113 @@ class Timeline(QWidget):
         p.drawText(QRectF(w - 234, h - 18, 200, 16), Qt.AlignRight, fmt(b))
         if self._hover is not None:
             p.drawText(QRectF(self._x(self._hover) + 4, lane + 2, 120, 16), Qt.AlignLeft, fmt(self._hover))
+
+    def _wave_regions(self, x_in: float, x_out: float, w: float):
+        """(x0, x1, colour) strips: each section's colour inside In/Out, grey outside."""
+        out = [(0.0, max(0.0, x_in), _c(C.faint)), (min(w, x_out), float(w), _c(C.faint))]
+        x = max(0.0, x_in)
+        for seg in sorted(self.segments, key=lambda q: q.start):
+            a, b = max(self._x(seg.start), x_in, 0.0), min(self._x(seg.end), x_out, w)
+            if b <= a:
+                continue
+            if a > x:
+                out.append((x, a, COL_WAVE))
+            out.append((a, b, WAVE_COL.get(seg.kind, COL_WAVE)))
+            x = max(x, b)
+        if x < min(w, x_out):
+            out.append((x, min(w, x_out), COL_WAVE))
+        return [r for r in out if r[1] > r[0]]
+
+    def _columns(self, n: int):
+        """Per display column: (hi, lo, rms) in −1..1 display units, or None."""
+        a, b = self.view
+        edges = a + (b - a) * np.arange(n + 1) / n
+        spp = (b - a) * SR / n                       # source samples per column
+        if self.audio is not None and spp < 2 * WAVE_HOP:
+            # zoomed far in: min/max of the real samples, so the actual wave shape shows
+            i0, i1 = max(0, int(a * SR)), min(len(self.audio), int(np.ceil(b * SR)) + 1)
+            if i1 - i0 < 2:
+                return None
+            y = np.asarray(self.audio[i0:i1], np.float32)
+            st = np.clip((edges[:-1] * SR).astype(int) - i0, 0, len(y) - 1)
+            hi = np.maximum.reduceat(y.max(axis=1), st)
+            lo = np.minimum.reduceat(y.min(axis=1), st)
+            cnt = np.maximum(np.diff(np.append(st, len(y))), 1)
+            rms = np.sqrt(np.add.reduceat((y ** 2).mean(axis=1), st) / cnt)
+            return _disp(hi, self._ref), _disp(lo, self._ref), _disp(rms, self._ref)
+        wv, hop = self._wave, self._hop
+        if wv is None or len(wv) == 0:
+            return None
+        pos = edges / hop
+        if spp >= hop * SR:                          # ≥ 1 bin per column: peak = max, rms = power mean
+            j0 = int(np.clip(pos[0], 0, len(wv) - 1))
+            j1 = int(np.clip(np.ceil(pos[-1]), j0 + 1, len(wv)))
+            sub = wv[j0:j1]
+            st = np.clip(pos[:-1].astype(int) - j0, 0, len(sub) - 1)
+            pk = np.maximum.reduceat(sub[:, 0], st)
+            cnt = np.maximum(np.diff(np.append(st, len(sub))), 1)
+            rms = np.sqrt(np.add.reduceat(sub[:, 1] ** 2, st) / cnt)
+        else:                                        # finer than the bins: smooth interpolation
+            c = (pos[:-1] + pos[1:]) / 2 - 0.5
+            k = np.arange(len(wv))
+            pk, rms = np.interp(c, k, wv[:, 0]), np.interp(c, k, wv[:, 1])
+        d = _disp(pk, self._ref)
+        return d, -d, _disp(rms, self._ref)
+
+    def _wave_layer(self, w: int, h: int, mid: float, half: float, x_in: float, x_out: float) -> QPixmap:
+        """The waveform as a transparent pixmap, cached until view, size, sections or trim change
+        (the playhead repaints many times a second; the waveform should not be redrawn each time)."""
+        dpr = max(1.0, self.devicePixelRatioF())
+        n = max(2, int(w * dpr))
+        segs = tuple((q.start, q.end, q.kind) for q in self.segments)
+        key = (self.view, w, h, dpr, round(x_in, 1), round(x_out, 1), segs, id(self._wave), id(self.audio))
+        if key == self._cols_key and self._cols is not None:
+            return self._cols
+        pm = QPixmap(int(w * dpr), int(h * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        cols = self._columns(n)
+        if cols is not None:
+            hi, lo, r = cols
+            r_hi = np.minimum(r, np.maximum(hi, 0))
+            r_lo = np.maximum(-r, np.minimum(lo, 0))
+            xs = (np.arange(n) + 0.5) / dpr
+            xs[0], xs[-1] = 0.0, float(w)
+
+            def poly(k0, k1, top, bot):
+                x = xs[k0:k1]
+                ys = np.concatenate([mid - top[k0:k1] * half, (mid - bot[k0:k1] * half)[::-1]])
+                xx = np.concatenate([x, x[::-1]])
+                return QPolygonF([QPointF(float(a), float(b)) for a, b in zip(xx, ys, strict=True)])
+
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            for x0, x1, col in self._wave_regions(x_in, x_out, w):
+                # only the columns of this strip (+1 on each side), clipped exactly to the strip
+                k0 = max(0, int(np.searchsorted(xs, x0)) - 1)
+                k1 = min(n, int(np.searchsorted(xs, x1)) + 1)
+                if k1 - k0 < 2:
+                    continue
+                p.save()
+                p.setClipRect(QRectF(x0, 0, x1 - x0, h))
+                light = QColor(col)
+                light.setAlpha(110)
+                p.setBrush(light)
+                p.drawPolygon(poly(k0, k1, hi, lo))
+                g = QLinearGradient(0, mid - half, 0, mid + half)
+                edge, core = QColor(col).lighter(115), QColor(col)
+                edge.setAlpha(235)
+                core.setAlpha(200)
+                g.setColorAt(0.0, edge)
+                g.setColorAt(0.5, core)
+                g.setColorAt(1.0, edge)
+                p.setBrush(QBrush(g))
+                p.drawPolygon(poly(k0, k1, r_hi, r_lo))
+                p.restore()
+            p.end()
+        self._cols_key, self._cols = key, pm
+        return pm
 
     # ---------------------------------------------------------------- interaction
     def _boundary_at(self, x: float, tol: float = 5.0) -> int | None:
@@ -302,7 +415,7 @@ class Timeline(QWidget):
         self.update()
 
     # ---------------------------------------------------------------- zoom / pan
-    MIN_SPAN_S = 2.0
+    MIN_SPAN_S = 0.25
 
     def _set_view(self, a: float, b: float) -> None:
         span = min(max(b - a, self.MIN_SPAN_S), self.duration)

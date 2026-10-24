@@ -733,7 +733,7 @@ class MainWindow(QMainWindow):
 
     def _analysed(self, _):
         p = self.project
-        self.timeline.set_data(p.levels, p.segments, p.duration)
+        self.timeline.set_data(p.levels, p.segments, p.duration, wave=p.wave, audio=p.orig)
         self.timeline.ref = p.tone_ref
         self.timeline.trim = p.trim
         if self._pending_project is not None:

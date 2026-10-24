@@ -261,3 +261,26 @@ def test_save_and_reopen_project_restores_everything(app, monkeypatch, reading_f
         assert not w2._dirty and "test.klang" in w2.windowTitle()
     finally:
         w2.close()
+
+
+def test_waveform_overview_and_columns(app):
+    from klangrestaurator.analysis import WAVE_HOP, waveform_overview
+    from klangrestaurator.settings import SR
+
+    t = np.arange(10 * SR) / SR
+    x = np.stack([0.5 * np.sin(2 * np.pi * 220 * t)] * 2, axis=1).astype(np.float32)
+    x[5 * SR:] *= 0.1                                    # second half 20 dB quieter
+    wave = waveform_overview(x)
+    assert wave.shape == (10 * SR // WAVE_HOP, 2)
+    assert abs(wave[: len(wave) // 2, 0].max() - 0.5) < 1e-3
+    assert abs(np.sqrt((wave[:400, 1] ** 2).mean()) - 0.5 / np.sqrt(2)) < 0.005   # rms of a sine
+
+    w = Timeline()
+    w.resize(800, 160)
+    w.set_data(np.full(40, -30.0), [Segment(0, 10, SPEECH)], 10.0, wave=wave, audio=x)
+    hi, lo, rms = w._columns(800)
+    assert np.allclose(hi, -lo) and hi[:350].min() > 0.9 and hi[450:].max() < 0.4   # quiet half lower
+    w._set_view(2.0, 2.25)                               # zoomed in: real samples, both signs
+    hi, lo, _ = w._columns(800)
+    assert hi.max() > 0.9 and lo.min() < -0.9 and (hi > 0).any() and (lo < 0).any()
+    assert not w.grab().isNull()

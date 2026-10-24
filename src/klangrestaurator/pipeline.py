@@ -49,6 +49,7 @@ class Project:
         self.orig: np.ndarray | None = None
         self.enh: np.ndarray | None = None
         self.levels: np.ndarray | None = None
+        self.wave: np.ndarray | None = None   # (peak, rms) per 5 ms, for the timeline
         self.segments: list[Segment] = []
         self.meta: dict = {}
         self.voice_bands: np.ndarray | None = None   # third-octave bands of the AI voice (tone matching)
@@ -111,6 +112,10 @@ class Project:
             np.save(f_elev, analysis.frame_levels(self.enh))
         self.levels = np.load(f_lev)
         self.enh_levels = np.load(f_elev)
+        f_wave = self.dir / "wave.npy"
+        if not f_wave.exists():
+            np.save(f_wave, analysis.waveform_overview(self.orig))
+        self.wave = np.load(f_wave)
 
         f_vb = self.dir / "voice_bands.npy"
         if not f_vb.exists():
