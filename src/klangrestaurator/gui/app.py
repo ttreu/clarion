@@ -155,7 +155,8 @@ class MainWindow(QMainWindow):
                               ("Stopp", Qt.Key_Period, self.stop),
                               ("Zurück", Qt.Key_Left, lambda: self.skip(-SKIP_MS)),
                               ("Vor", Qt.Key_Right, lambda: self.skip(SKIP_MS)),
-                              ("Zum Anfang", Qt.Key_Home, self.to_start)):
+                              ("Zum Anfang", Qt.Key_Home, self.to_start),
+                              ("Schleife", Qt.Key_L, self.btn_loop.toggle)):
             self.addAction(QAction(name, self, shortcut=QKeySequence(key), triggered=fn))
         ab_toggle = QAction("A/B", self, shortcut=QKeySequence(Qt.Key_Tab),
                             triggered=lambda: (self.rb_a if self.rb_b.isChecked() else self.rb_b).setChecked(True))
@@ -188,7 +189,15 @@ class MainWindow(QMainWindow):
         self.btn_play = btn(QStyle.SP_MediaPlay, "Abspielen / Pause (Leertaste)", self.toggle_play)
         self.btn_stop = btn(QStyle.SP_MediaStop, "Stopp (.)", self.stop)
         self.btn_fwd = btn(QStyle.SP_MediaSeekForward, f"{sec} s vor (→)", lambda: self.skip(SKIP_MS))
-        self.transport = (self.btn_start, self.btn_back, self.btn_play, self.btn_stop, self.btn_fwd)
+        self.btn_loop = QToolButton()
+        self.btn_loop.setText("↻")
+        self.btn_loop.setToolTip("Schleife: Vorschau endlos wiederholen (L)")
+        self.btn_loop.setCheckable(True)
+        self.btn_loop.setChecked(self.prefs.value("loop", False, type=bool))
+        self.btn_loop.toggled.connect(self._set_loop)
+        row.addSpacing(8)
+        row.addWidget(self.btn_loop)
+        self.transport = (self.btn_start, self.btn_back, self.btn_play, self.btn_stop, self.btn_fwd, self.btn_loop)
         self.lbl_time = QLabel("–:–– / –:––")
         self.lbl_time.setStyleSheet("font-family: Menlo, monospace;")
         row.addSpacing(8)
@@ -375,6 +384,7 @@ class MainWindow(QMainWindow):
             self.out = QAudioOutput(self)
             self.player = QMediaPlayer(self)
             self.player.setAudioOutput(self.out)
+            self.player.mediaStatusChanged.connect(self._on_media_status)
             self.player.positionChanged.connect(self._on_play_pos)
             self.player.durationChanged.connect(lambda _: self._update_time())
             self.player.playbackStateChanged.connect(self._on_state)
@@ -428,6 +438,15 @@ class MainWindow(QMainWindow):
         if dur > 0:
             pos = min(pos, dur - 1)
         self.player.setPosition(pos)
+
+    def _set_loop(self, on: bool):
+        self.prefs.setValue("loop", on)
+
+    def _on_media_status(self, status):
+        # Loop by hand: QMediaPlayer.setLoops() keeps repeating for a while after switching it off.
+        if status == QMediaPlayer.EndOfMedia and self.btn_loop.isChecked():
+            self.player.setPosition(0)
+            self.player.play()
 
     def _on_state(self, state):
         playing = state == QMediaPlayer.PlayingState
