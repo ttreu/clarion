@@ -47,3 +47,11 @@ def no_dfn(monkeypatch):
     from klangrestaurator import dfn
     monkeypatch.setattr(dfn, "enhance", fake_enhance)
     monkeypatch.setattr(dfn, "ensure_binary", lambda progress=None: None)
+
+
+@pytest.fixture(autouse=True)
+def isolated_cache(tmp_path_factory, monkeypatch):
+    """Keep test projects out of the real cache (~/Library/Caches/Klangrestaurator)."""
+    from klangrestaurator import pipeline
+    root = tmp_path_factory.mktemp("cache")
+    monkeypatch.setattr(pipeline, "cache_root", lambda: root)
