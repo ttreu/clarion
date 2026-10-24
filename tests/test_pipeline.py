@@ -60,3 +60,36 @@ def test_real_deepfilternet(reading_file, tmp_path):
     proj.prepare()
     y = proj.render(PRESETS["Natürlich"], 0, 5)
     assert np.isfinite(y).all()
+
+
+def test_mix_segment_is_voice_plus_share_of_music(reading_file, no_dfn):
+    from klangrestaurator.analysis import MIX, SPEECH
+    path, _ = reading_file
+    proj = Project(path)
+    proj.prepare()
+    lvl = lambda x: 10 * np.log10((x ** 2).mean())  # noqa: E731
+    st = PRESETS["Natürlich"]
+    y_music = proj.render(st, 12, 18)          # 10–20 s is detected as music
+    proj.set_kind(10, 20, SPEECH)              # as plain speech the AI wipes the music
+    y_speech = proj.render(st, 12, 18)
+    proj.set_kind(10, 20, MIX)
+    same_nr = st.with_(mix_reduction=st.music_reduction)
+    y_full = proj.render(same_nr.with_(mix_music=1.0), 12, 18)
+    y_half = proj.render(same_nr.with_(mix_music=0.5), 12, 18)
+    assert lvl(y_music) - lvl(y_speech) > 10
+    assert abs(lvl(y_half) - (lvl(y_music) - 6)) < 1    # music share 50 % → music about 6 dB down
+    assert lvl(y_full) >= lvl(y_music) - 0.1            # 100 %: full music (plus the dry voice)
+    y_default = proj.render(st, 12, 18)                 # stronger NR on the music share costs a little
+    assert lvl(y_half) - 3 < lvl(y_default) <= lvl(y_half) + 0.1
+
+
+def test_adjacent_music_and_mix_are_not_denoised_twice(reading_file, no_dfn):
+    from klangrestaurator.analysis import MIX
+    path, _ = reading_file
+    proj = Project(path)
+    proj.prepare()
+    st = PRESETS["Natürlich"].with_(mix_music=1.0)
+    ref = proj.render(st, 14.5, 15.5)          # inside one music section
+    proj.set_kind(15, 20, MIX)                 # music 10–15 | mix 15–20, boundary at 15 s
+    y = proj.render(st.with_(mix_fade_s=0.01), 14.5, 14.9)  # just before the boundary: still music
+    np.testing.assert_allclose(y, ref[: len(y)], atol=2e-3)

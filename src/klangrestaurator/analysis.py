@@ -16,7 +16,9 @@ import numpy as np
 from .settings import SR, Settings
 
 FRAME = SR // 4  # 0.25 s analysis frames
-SPEECH, MUSIC = "speech", "music"
+SPEECH, MUSIC, MIX = "speech", "music", "mix"
+# SPEECH → speech chain (AI); MUSIC → music chain (gentle NR); MIX → music chain + some dry AI voice
+KIND_LABEL = {SPEECH: "Sprache", MUSIC: "Musik", MIX: "Sprache + Musik"}
 
 
 @dataclass
@@ -84,7 +86,121 @@ def classify(orig_db: np.ndarray, enh_db: np.ndarray, st: Settings) -> list[Segm
 
     segs = [[s / 4, e / 4, MUSIC if v else SPEECH] for s, e, v in _runs(music)]
     segs = _refine(segs, orig_db)
-    return _sanitize([(a, b) for a, b, k in segs if k == MUSIC], nf / 4)
+    out = _sanitize([(a, b) for a, b, k in segs if k == MUSIC], nf / 4)
+    out = detect_mix(out, orig_db, enh_db, st)
+    out = music_with_speech(out, orig_db, enh_db, st)
+    return merge_short(out, st.min_switch_s)
+
+
+def music_with_speech(segs: list[Segment], orig_db: np.ndarray, enh_db: np.ndarray,
+                      st: Settings) -> list[Segment]:
+    """Automatic music sections in which speech survives the AI are speech + music, not music.
+
+    In pure music the AI removes 20–50 dB in every frame; where someone talks over the music, a fair
+    share of frames keeps the AI output within a few dB of the original.
+    """
+    nf = min(len(orig_db), len(enh_db))
+    out = []
+    for sg in segs:
+        if sg.kind == MUSIC and not sg.manual:
+            a, b = int(round(sg.start * 4)), min(nf, int(round(sg.end * 4)))
+            if b > a:
+                talk = ((enh_db[a:b] - orig_db[a:b]) > -10) & (enh_db[a:b] > st.active_level_db)
+                if talk.sum() >= 3 and talk.mean() >= st.mix_speech_share:
+                    sg = Segment(sg.start, sg.end, MIX)
+        out.append(sg)
+    return _merge_equal(out)
+
+
+def _merge_equal(segs: list[Segment]) -> list[Segment]:
+    out: list[Segment] = []
+    for s in segs:
+        if out and out[-1].kind == s.kind and out[-1].manual == s.manual and abs(out[-1].end - s.start) < 1e-6:
+            out[-1] = Segment(out[-1].start, s.end, s.kind, s.manual)
+        else:
+            out.append(Segment(s.start, s.end, s.kind, s.manual))
+    return out
+
+
+def merge_short(segs: list[Segment], min_s: float) -> list[Segment]:
+    """Absorb automatic sections shorter than ``min_s`` into a neighbour, so methods don't flip quickly.
+
+    Sections at the very start or end of the file are kept (they only cause a single switch).
+
+    A short section goes to the neighbour that is speech + music if there is one (it keeps both voice
+    and music), otherwise to the longer neighbour. Manual sections are never changed or absorbed into.
+    """
+    segs = _merge_equal(segs)
+    stuck: set[tuple[float, float]] = set()  # short sections boxed in by manual ones
+    while len(segs) > 1:
+        # only sections with a neighbour on both sides cause back-and-forth switching
+        cand = [i for i, s in enumerate(segs) if 0 < i < len(segs) - 1
+                and not s.manual and s.duration < min_s and (s.start, s.end) not in stuck]
+        if not cand:
+            break
+        i = min(cand, key=lambda k: segs[k].duration)
+        nb = [j for j in (i - 1, i + 1) if 0 <= j < len(segs) and not segs[j].manual]
+        if not nb:
+            stuck.add((segs[i].start, segs[i].end))
+            continue
+        mixn = [j for j in nb if segs[j].kind == MIX]
+        j = mixn[0] if mixn else max(nb, key=lambda k: segs[k].duration)
+        segs[i] = Segment(segs[i].start, segs[i].end, segs[j].kind)
+        segs = _merge_equal(segs)
+    return segs
+
+
+def _noise_floor(lev: np.ndarray, radius: int = 240, pct: float = 5) -> np.ndarray:
+    """Local noise floor per frame: low percentile of the level within ±radius frames (±60 s)."""
+    step = 20
+    pts = np.arange(0, len(lev), step)
+    vals = [np.percentile(lev[max(0, i - radius):i + radius + 1], pct) for i in pts]
+    return np.interp(np.arange(len(lev)), pts, vals)
+
+
+def detect_mix(segs: list[Segment], orig_db: np.ndarray, enh_db: np.ndarray, st: Settings) -> list[Segment]:
+    """Mark stretches of automatic speech where music keeps playing under the voice as MIX.
+
+    Looks at the gaps between words (frames the AI wipes by more than ``music_ratio_db``): in plain
+    speech they are near the noise floor, with music under the voice they stay ``mix_gap_db`` above it.
+    """
+    nf = min(len(orig_db), len(enh_db))
+    if nf == 0 or not segs:
+        return segs
+    o, e = orig_db[:nf], enh_db[:nf]
+    gap = (e - o) < st.music_ratio_db
+    musical = gap & (o > _noise_floor(o) + st.mix_gap_db)
+    k = 32  # 8 s window
+    min_frames = int(st.min_segment_s * 4)
+    out: list[Segment] = []
+    for sg in segs:
+        a, b = int(round(sg.start * 4)), min(nf, int(round(sg.end * 4)))
+        if sg.kind != SPEECH or sg.manual or b - a < min_frames:
+            out.append(sg)
+            continue
+        # judge each speech segment on its own frames only (no carry-over from neighbouring music)
+        g = gap[a:b]
+        n_gap = np.convolve(g.astype(float), np.ones(k), "same")
+        n_mus = np.convolve(musical[a:b].astype(float), np.ones(k), "same")
+        # music *under* speech shows in many separate word gaps, not in one block (a short interlude)
+        starts = g & ~np.concatenate([[False], g[:-1]])
+        n_events = np.convolve(starts.astype(float), np.ones(k), "same")
+        score = np.where((n_gap >= 4) & (n_events >= 3), n_mus / np.maximum(n_gap, 1), np.nan)
+        f = np.zeros(b - a, bool)
+        last = False
+        for i in range(b - a):
+            if not np.isnan(score[i]):
+                last = score[i] >= st.mix_gap_share
+            f[i] = last
+        for s0, e0, v in _runs(f):
+            if e0 - s0 < min_frames:
+                f[s0:e0] = not v
+        for s0, e0, v in _runs(f):
+            t0 = sg.start if s0 == 0 else (a + s0) / 4
+            t1 = sg.end if e0 == len(f) else (a + e0) / 4
+            if t1 > t0:
+                out.append(Segment(t0, t1, MIX if v else SPEECH))
+    return out
 
 
 def _refine(segs, lev):
@@ -193,7 +309,7 @@ def snap_music_onsets(segs: list[Segment], x: np.ndarray, pre_s: float = 0.025) 
 
 
 def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0,
-                onset_fade_s: float | None = None) -> np.ndarray:
+                onset_fade_s: float | None = None, mix_fade_s: float | None = None) -> np.ndarray:
     """Per-sample weight (1 = speech chain, 0 = music chain) for samples [start, start+n).
 
     Music→speech boundaries get a raised-cosine ramp of ``crossfade_s`` centred on the boundary.
@@ -214,14 +330,14 @@ def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0,
         return (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, L))).astype(np.float32)
 
     for prev, nxt in zip(segs, segs[1:], strict=False):
-        if prev.kind == nxt.kind:
+        if (prev.kind == SPEECH) == (nxt.kind == SPEECH):
             continue
         c = int(nxt.start * SR) - start
-        if nxt.kind == MUSIC and onset_fade_s is not None:
+        if prev.kind == SPEECH and nxt.kind == MUSIC and onset_fade_s is not None:
             L = int(onset_fade_s * SR)
             a = c - L
         else:
-            L = int(crossfade_s * SR)
+            L = int((mix_fade_s if MIX in (prev.kind, nxt.kind) and mix_fade_s else crossfade_s) * SR)
             a = c - L // 2
         b = a + L
         if L <= 1 or b <= 0 or a >= n:
@@ -229,6 +345,30 @@ def speech_mask(segs: list[Segment], n: int, crossfade_s: float, start: int = 0,
         r = ramp(L) if nxt.kind == SPEECH else 1 - ramp(L)
         lo, hi = max(0, a), min(n, b)
         m[lo:hi] = r[lo - a:hi - a]
+    return m
+
+
+def kind_mask(segs: list[Segment], kind: str, n: int, crossfade_s: float, start: int = 0) -> np.ndarray:
+    """Per-sample weight of ``kind`` for samples [start, start+n), raised-cosine ramps centred on edges."""
+    m = np.zeros(n, np.float32)
+    L = int(crossfade_s * SR)
+    for s in segs:
+        if s.kind != kind:
+            continue
+        a, b = int(s.start * SR) - start, int(s.end * SR) - start
+        lo, hi = max(0, a), min(n, b)
+        if hi > lo:
+            m[lo:hi] = 1.0
+    if L > 1:
+        ramp = (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, L))).astype(np.float32)
+        for prev, nxt in zip(segs, segs[1:], strict=False):
+            if (prev.kind == kind) == (nxt.kind == kind):
+                continue
+            a = int(nxt.start * SR) - start - L // 2
+            lo, hi = max(0, a), min(n, a + L)
+            if hi > lo:
+                r = ramp if nxt.kind == kind else 1 - ramp
+                m[lo:hi] = r[lo - a:hi - a]
     return m
 
 

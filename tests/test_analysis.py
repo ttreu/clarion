@@ -89,3 +89,47 @@ def test_onset_fade_ends_at_music_start():
     assert m[int(1.95 * SR)] == 1 and m[2 * SR] < 1e-3            # speech chain until 40 ms before
     assert 0 < m[int(1.98 * SR)] < 1
     assert 0.4 < m[4 * SR] < 0.6                                   # music→speech still centred
+
+
+def test_detect_mix_marks_speech_with_music_in_the_gaps():
+    from klangrestaurator.analysis import MIX, detect_mix
+    n = 60 * 4
+    orig = np.full(n, -28.0)
+    enh = orig - 4
+    gaps = np.arange(2, n, 5)                  # a gap every 1.25 s
+    orig[gaps] = -50.0                         # plain speech: gaps sit on the noise floor
+    enh[gaps] = -75.0
+    mix = gaps[(gaps >= 80) & (gaps < 160)]    # 20–40 s: music keeps sounding in the gaps
+    orig[mix] = -38.0
+    segs = detect_mix([Segment(0, 60, SPEECH)], orig, enh, Settings())
+    kinds = [(round(s.start), round(s.end), s.kind) for s in segs]
+    assert [k for *_, k in kinds] == [SPEECH, MIX, SPEECH]
+    assert abs(segs[1].start - 20) < 3 and abs(segs[1].end - 40) < 3
+    # manual speech and music segments are left alone
+    manual = [Segment(0, 60, SPEECH, manual=True)]
+    assert detect_mix(manual, orig, enh, Settings())[0].kind == SPEECH
+
+
+def test_music_with_speech_becomes_mix():
+    from klangrestaurator.analysis import MIX, music_with_speech
+    n = 40 * 4
+    orig = np.full(n, -25.0)
+    enh = orig - 40                           # pure music: the AI removes 40 dB everywhere
+    talk = np.arange(80, 120, 3)              # 20–30 s: someone talks over the music
+    enh[talk] = orig[talk] - 5
+    segs = [Segment(0, 20, MUSIC), Segment(20, 30, MUSIC), Segment(30, 40, MUSIC, manual=True)]
+    enh[np.arange(122, 160, 3)] = -30          # talk in the manual section too: must stay music
+    out = music_with_speech(segs, orig, enh, Settings())
+    assert [s.kind for s in out] == [MUSIC, MIX, MUSIC]
+
+
+def test_merge_short_avoids_rapid_switching():
+    from klangrestaurator.analysis import MIX, merge_short
+    segs = [Segment(0, 10, SPEECH), Segment(10, 12, MIX), Segment(12, 20, SPEECH),
+            Segment(20, 24, MUSIC), Segment(24, 30, MIX), Segment(30, 40, SPEECH)]
+    out = merge_short(segs, 6.0)
+    assert all(s.duration >= 6 for s in out)
+    # the short music bit between speech and speech + music goes to speech + music
+    assert [(s.start, s.end, s.kind) for s in out] == [(0, 20, SPEECH), (20, 30, MIX), (30, 40, SPEECH)]
+    manual = [Segment(0, 10, SPEECH), Segment(10, 12, MUSIC, manual=True), Segment(12, 20, SPEECH)]
+    assert merge_short(manual, 6.0)[1].manual  # manual sections stay as they are

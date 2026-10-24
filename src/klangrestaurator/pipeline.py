@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from . import analysis, audio_io, chains, dfn
-from .analysis import MUSIC, Segment
+from .analysis import MIX, SPEECH, Segment
 from .settings import SR, Settings
 
 Progress = Callable[[str, float], None] | None
@@ -151,15 +151,25 @@ class Project:
         blk, pad = BLOCK_S * SR, PAD_S * SR
         n_blocks = max(1, -(-n // blk))
         segs = self._render_segments()
-        music = [s for s in segs if s.kind == MUSIC and s.end * SR > A and s.start * SR < B]
-        steps = n_blocks + len(music)
+        # consecutive music / speech+music sections share one noise-reduction pass (no double counting
+        # at their common boundary)
+        runs: list[list[Segment]] = []
+        for sg in segs:
+            if sg.kind == SPEECH:
+                continue
+            if runs and abs(runs[-1][-1].end - sg.start) < 1e-6:
+                runs[-1].append(sg)
+            else:
+                runs.append([sg])
+        runs = [r for r in runs if r[-1].end * SR > A and r[0].start * SR < B]
+        steps = n_blocks + len(runs)
         step = 0
         for s in range(A, B, blk):
             self._check(cancel)
             e = min(B, s + blk)
             ps, pe = max(0, s - pad), min(N, e + pad)
             m = analysis.speech_mask(segs, e - s, settings.crossfade_s, start=s,
-                                     onset_fade_s=settings.onset_fade_s)[:, None]
+                                     onset_fade_s=settings.onset_fade_s, mix_fade_s=settings.mix_fade_s)[:, None]
             o = np.asarray(self.orig[ps:pe])
             mu = chains.highpass(o, settings.music_highpass_hz)[s - ps:e - ps]
             if m.max() > 1e-3:
@@ -172,21 +182,35 @@ class Project:
             step += 1
             p("Restaurieren", step / steps)
 
-        # music passages: add the spectral noise reduction on top of the plain high-passed signal
-        for seg in music:
+        # music: add the spectral noise reduction on top of the plain high-passed signal (M = music chain).
+        # speech + music: dry AI voice + mix_music · M'  (like the speech chain, but with a large share of
+        # the denoised original, so the music stays continuous under the voice; M' uses mix_reduction)
+        for run in runs:
             self._check(cancel)
-            a = max(A, int((seg.start - 1) * SR))
-            b = min(B, int((seg.end + 1) * SR))
+            r0, r1 = run[0].start, run[-1].end
+            a = max(A, int((r0 - 1) * SR))
+            b = min(B, int((r1 + 1) * SR))
             if b - a < SR // 10:
                 continue
-            noise = chains.noise_profile(self.orig, self.levels, seg.start, seg.end)
+            noise = chains.noise_profile(self.orig, self.levels, r0, r1)
             pa, pb = max(0, a - pad), min(N, b + pad)
             o = np.asarray(self.orig[pa:pb])
-            x = chains.highpass(o, settings.music_highpass_hz)
-            y = chains.music_chain(o, noise, settings.music_reduction, settings.music_highpass_hz)
-            w = 1 - analysis.speech_mask(segs, b - a, settings.crossfade_s, start=a,
-                                         onset_fade_s=settings.onset_fade_s)[:, None]
-            out[a - A:b - A] += w * (y[a - pa:b - pa] - x[a - pa:b - pa])
+            x = chains.highpass(o, settings.music_highpass_hz)[a - pa:b - pa]
+            y = chains.music_chain(o, noise, settings.music_reduction, settings.music_highpass_hz)[a - pa:b - pa]
+            ms = analysis.speech_mask(segs, b - a, settings.crossfade_s, start=a,
+                                      onset_fade_s=settings.onset_fade_s, mix_fade_s=settings.mix_fade_s)[:, None]
+            out[a - A:b - A] += (1 - ms) * (y - x)
+            if any(sg.kind == MIX for sg in run):
+                v = chains.highpass(chains.stereo_link(o, np.asarray(self.enh[pa:pb])),
+                                    settings.speech_highpass_hz)[a - pa:b - pa]
+                # the music share gets a stronger NR: noise is stationary, music isn't, so this costs
+                # little music (02.WAV: noise −13 dB instead of −9 dB, cello −2.4 dB instead of −1.8 dB)
+                ym = chains.music_chain(o, noise, settings.mix_reduction, settings.music_highpass_hz)
+                if settings.speech_dereverb:  # "Zusätzliche Hallreduktion" also dries the room sound here
+                    ym = chains.wpe_dereverb(ym)
+                ym = ym[a - pa:b - pa]
+                wm = analysis.kind_mask(segs, MIX, b - a, settings.mix_fade_s, start=a)[:, None]
+                out[a - A:b - A] += wm * (v + settings.mix_music * ym - y)
             step += 1
             p("Restaurieren", step / steps)
         return out

@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .analysis import MUSIC
+from .analysis import KIND_LABEL, SPEECH
 from .pipeline import Project, default_output_name
 from .settings import PRESETS, SR
 
@@ -26,9 +26,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-p", "--preset", default="Natürlich", choices=list(PRESETS))
     ap.add_argument("--speech-db", type=float, help="Rauschreduktion Sprache in dB (überschreibt Preset)")
     ap.add_argument("--music", type=float, help="Rauschreduktion Musik 0..1 (überschreibt Preset)")
+    ap.add_argument("--mix-music", type=float,
+                    help="„Sprache + Musik“: Anteil des entrauschten Originals 0..1 (Standard 0.5)")
     ap.add_argument("--dereverb", action=argparse.BooleanOptionalAction, help="Zusätzliche Hallreduktion (WPE)")
     ap.add_argument("--keep-rate", action="store_true", help="Original-Samplerate statt 48 kHz ausgeben")
-    ap.add_argument("--segments", action="store_true", help="Nur analysieren und Musikpassagen auflisten")
+    ap.add_argument("--segments", action="store_true",
+                    help="Nur analysieren und Musik- / Sprache-+-Musik-Abschnitte auflisten")
     a = ap.parse_args(argv)
 
     st = PRESETS[a.preset]
@@ -36,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         st = st.with_(speech_reduction_db=a.speech_db)
     if a.music is not None:
         st = st.with_(music_reduction=a.music)
+    if a.mix_music is not None:
+        st = st.with_(mix_music=a.mix_music)
     if a.dereverb is not None:
         st = st.with_(speech_dereverb=a.dereverb)
 
@@ -45,8 +50,9 @@ def main(argv: list[str] | None = None) -> int:
         proj.prepare(st, progress=_bar)
         if a.segments:
             for s in proj.segments:
-                if s.kind == MUSIC:
-                    print(f"Musik {int(s.start // 60)}:{s.start % 60:04.1f} – {int(s.end // 60)}:{s.end % 60:04.1f}")
+                if s.kind != SPEECH:
+                    print(f"{KIND_LABEL[s.kind]} {int(s.start // 60)}:{s.start % 60:04.1f} – "
+                          f"{int(s.end // 60)}:{s.end % 60:04.1f}")
             continue
         dest = a.output if (a.output and len(a.input) == 1) else default_output_name(src, a.preset)
         out_sr = proj.meta.get("sr_in", SR) if a.keep_rate else SR

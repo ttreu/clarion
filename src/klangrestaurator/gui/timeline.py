@@ -6,10 +6,12 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QSizePolicy, QWidget
 
-from ..analysis import MUSIC, SPEECH, Segment
+from ..analysis import KIND_LABEL, MIX, MUSIC, SPEECH, Segment
 
 COL_SPEECH = QColor(70, 130, 220, 70)
 COL_MUSIC = QColor(235, 160, 40, 90)
+COL_MIX = QColor(150, 90, 200, 80)
+KIND_COL = {SPEECH: COL_SPEECH, MUSIC: COL_MUSIC, MIX: COL_MIX}
 COL_WAVE = QColor(60, 60, 70)
 COL_SEL = QColor(40, 170, 120, 70)
 COL_HEAD = QColor(220, 40, 60)
@@ -22,7 +24,7 @@ def fmt(t: float) -> str:
 class Timeline(QWidget):
     seek = Signal(float)                      # user clicked a position (s)
     selection_changed = Signal(float, float)  # (start, end) s, end<=start means none
-    relabel = Signal(float, float, str)       # mark range as speech/music
+    relabel = Signal(float, float, str)       # mark range as speech/music/mix
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,7 +85,7 @@ class Timeline(QWidget):
             if s.end < a or s.start > b:
                 continue
             x0, x1 = self._x(s.start), self._x(s.end)
-            col = COL_MUSIC if s.kind == MUSIC else COL_SPEECH
+            col = KIND_COL.get(s.kind, COL_SPEECH)
             p.fillRect(QRectF(x0, lane, x1 - x0, h - lane), col)
             solid = QColor(col)
             solid.setAlpha(230)
@@ -93,7 +95,7 @@ class Timeline(QWidget):
             if x1 - x0 > 60:
                 p.setPen(Qt.white)
                 p.drawText(QRectF(x0 + 4, 0, x1 - x0 - 8, lane - 2), Qt.AlignVCenter | Qt.AlignLeft,
-                           "Musik" if s.kind == MUSIC else "Sprache")
+                           KIND_LABEL.get(s.kind, s.kind))
 
         # level envelope (dB mapped -70..0)
         lv = self.levels
@@ -184,7 +186,8 @@ class Timeline(QWidget):
                 return
             s0, s1 = seg.start, seg.end
         m = QMenu(self)
-        for label, kind in (("Als Sprache behandeln", SPEECH), ("Als Musik behandeln", MUSIC)):
+        for label, kind in (("Als Sprache behandeln", SPEECH), ("Als Musik behandeln", MUSIC),
+                            ("Als Sprache + Musik behandeln", MIX)):
             act = QAction(f"{label}  ({fmt(s0)} – {fmt(s1)})", m)
             act.triggered.connect(lambda _=False, k=kind: self.relabel.emit(s0, s1, k))
             m.addAction(act)

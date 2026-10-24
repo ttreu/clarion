@@ -18,6 +18,23 @@ class Settings:
     speech_stereo_link: bool = True
     """Apply the AI's suppression with one gain for both channels (stops the voice drifting L/R)."""
 
+    # --- speech + music ("Sprache + Musik") ---------------------------------
+    mix_music: float = 0.5
+    """Speech + music = dry AI voice + this share of the gently denoised original (music chain).
+    Lower: drier voice, less noise, quieter music. Higher: more music, more room sound and noise."""
+    mix_reduction: float = 0.95
+    """Noise reduction (0..1) for the music share in speech + music; stronger than in pure music."""
+    mix_fade_s: float = 1.0
+    """Crossfade at boundaries of speech + music sections."""
+    mix_gap_db: float = 6.0
+    """Detection: gaps between words this far above the noise floor count as music under speech."""
+    mix_gap_share: float = 0.4
+    """Detection: share of such gaps (within 8 s) needed to mark speech as speech + music."""
+    mix_speech_share: float = 0.1
+    """Detection: a music section where at least this share of frames carries speech becomes speech + music."""
+    min_switch_s: float = 6.0
+    """Automatic sections shorter than this are merged into a neighbour (no rapid switching)."""
+
     # --- music chain --------------------------------------------------------
     music_reduction: float = 0.70
     """0..1 – proportion of stationary noise removed in music passages (0.7 ≈ -10 dB)."""

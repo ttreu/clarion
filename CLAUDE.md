@@ -34,6 +34,12 @@ render(range, Settings):
                   link: one STFT gain per bin from both AI channels, applied to orig L+R
                   (deep-filter runs L/R independently → voice drifts L/R at high reduction)
    music  chain = HP(orig) + (noisereduce(orig, local noise profile) − HP(orig))
+   mix (speech + music) = HP(link(enh)) + mix_music·M'   M' = noisereduce(orig, prop 0.95) [+ WPE if
+                  dereverb]; like the speech chain with a large, denoised share of the original, so the music
+                  stays continuous (no pumping). Noise, room sound and music share one knob (mix_music).
+                  Earlier tries: recovering music from the AI residual (damaged the music) and music chain +
+                  voice lift (too noisy and reverberant).
+                  Consecutive music/mix sections share one NR pass (no double NR at their boundary).
    out = mask·speech + (1−mask)·music     mask = raised-cosine crossfade at segment boundaries:
          music→speech 0.5 s centred; speech→music 40 ms ending at the onset, which render() snaps
          to 5 ms precision (snap_music_onsets, auto boundaries only) so the music chain's higher
@@ -52,8 +58,13 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 - `src/klangrestaurator/settings.py` – `Settings` dataclass + `PRESETS` (Natürlich / Kräftig / Sanft)
 - `audio_io.py` – decode to 48 kHz memmap (soundfile; ffmpeg fallback for m4a etc.), blockwise WAV writer
 - `dfn.py` – downloads/locates DeepFilterNet3 Rust binary (GitHub release v0.5.6), chunked `enhance()`
-- `analysis.py` – frame levels, `classify()`, onset/decay refinement, `set_kind()` for manual fixes, `speech_mask()`
-- `chains.py` – high-pass, speech chain, WPE (nara_wpe, 10 s chunks), music chain (noisereduce, n_fft 4096)
+- `analysis.py` – frame levels, `classify()`: speech/music, then `detect_mix()` (speech whose word gaps stay
+  ≥ 6 dB above the noise floor in ≥ 40 % of ≥ 3 separate gaps per 8 s → MIX), `music_with_speech()` (music
+  with ≥ 10 % frames where speech survives the AI → MIX), `merge_short()` (inner sections < 6 s join a
+  neighbour, preferring MIX: no rapid switching); onset/decay refinement, `snap_music_onsets()`, `set_kind()`
+  for manual fixes, `speech_mask()` (SPEECH only; 1 s fades at MIX boundaries), `kind_mask()`
+- `chains.py` – high-pass, `stereo_link`, speech chain, WPE (nara_wpe, 10 s chunks), music chain
+  (noisereduce, n_fft 4096)
 - `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
 - `cli.py` – CLI; `gui/app.py` main window; `gui/timeline.py` level + segment view (click/drag/right-click/zoom);
@@ -63,6 +74,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 ## Conventions / gotchas
 
 - Internal rate is always 48 kHz (DeepFilterNet requirement). Don't add resampling inside chains.
+- Segment kinds: `speech`, `music`, `mix` (= "Sprache + Musik"). Labels in `analysis.KIND_LABEL`.
 - Cache invalidation is by path+size+mtime. Changing the analysis algorithm → use "Erkennung neu berechnen"
   (reclassify) or delete the cache folder; `enh.npy` only depends on the source.
 - Manually corrected segments have `manual=True`; reclassify overwrites them (by design for now).
@@ -78,7 +90,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 ## Ideas / roadmap
 
 - Third class "applause/crowd" (currently treated as music = gentle NR) with its own handling
-- Speech-under-music overlap (cello under the voice): mix both chains instead of a hard choice
+- Per-section settings (e.g. stronger dereverb + matching EQ where the speaker sits close to the PA mic)
 - Loudness normalisation (EBU R128) and gentle speech leveling as export option
 - Batch window (several files, one preset), drag-out of finished files
 - Code signing/notarisation for the .app; bundle the deep-filter binary instead of downloading

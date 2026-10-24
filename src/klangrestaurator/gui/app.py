@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
-from ..analysis import MUSIC
+from ..analysis import MIX, MUSIC
 from ..pipeline import Project, default_output_name
 from ..settings import PRESETS, SR, Settings
 from . import worker
@@ -109,6 +109,11 @@ class MainWindow(QMainWindow):
         f.addRow("", self.chk_wpe)
         self.sl_music, self.lbl_music = self._slider(0, 100, "%")
         f.addRow("Musik: Rauschreduktion", self._pair(self.sl_music, self.lbl_music))
+        self.sl_mix, self.lbl_mix = self._slider(0, 100, "%")
+        self.sl_mix.setToolTip("„Sprache + Musik“ = KI-Stimme + dieser Anteil des sanft entrauschten Originals. "
+                               "Weniger: trockener, weniger Rauschen, Musik leiser. "
+                               "Mehr: mehr Musik, aber auch mehr Raumklang und Rauschen.")
+        f.addRow("Sprache + Musik: Musikanteil", self._pair(self.sl_mix, self.lbl_mix))
         self.cmb_rate = QComboBox()
         self.cmb_rate.addItems(["48 kHz (Video)", "Original-Samplerate"])
         f.addRow("Ausgabe (24 bit WAV)", self.cmb_rate)
@@ -251,7 +256,8 @@ class MainWindow(QMainWindow):
         base = PRESETS.get(self.cmb_preset.currentText(), Settings())
         return base.with_(speech_reduction_db=float(self.sl_speech.value()),
                           speech_dereverb=self.chk_wpe.isChecked(),
-                          music_reduction=self.sl_music.value() / 100)
+                          music_reduction=self.sl_music.value() / 100,
+                          mix_music=self.sl_mix.value() / 100)
 
     def _apply_preset(self, name: str):
         st = PRESETS.get(name)
@@ -259,6 +265,7 @@ class MainWindow(QMainWindow):
             return
         self.sl_speech.setValue(int(st.speech_reduction_db))
         self.sl_music.setValue(int(round(st.music_reduction * 100)))
+        self.sl_mix.setValue(int(round(st.mix_music * 100)))
         self.chk_wpe.setChecked(st.speech_dereverb)
         self.prefs.setValue("preset", name)
         self._mark_stale()
@@ -370,7 +377,12 @@ class MainWindow(QMainWindow):
         self.timeline.set_data(p.levels, p.segments, p.duration)
         n_music = sum(1 for s in p.segments if s.kind == MUSIC)
         t_music = sum(s.duration for s in p.segments if s.kind == MUSIC)
-        self.statusBar().showMessage(f"{fmt(p.duration)} min · {n_music} Musikpassagen ({fmt(t_music)}) erkannt")
+        n_mix = sum(1 for s in p.segments if s.kind == MIX)
+        t_mix = sum(s.duration for s in p.segments if s.kind == MIX)
+        msg = f"{fmt(p.duration)} min · {n_music} Musikpassagen ({fmt(t_music)})"
+        if n_mix:
+            msg += f" · {n_mix}× Sprache + Musik ({fmt(t_mix)})"
+        self.statusBar().showMessage(msg + " erkannt")
         self._set_busy(False)
 
     # ------------------------------------------------------------------ segments
