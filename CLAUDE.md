@@ -65,6 +65,9 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   for manual fixes, `speech_mask()` (SPEECH only; 1 s fades at MIX boundaries), `kind_mask()`
 - `chains.py` – high-pass, `stereo_link`, speech chain, WPE (nara_wpe, 10 s chunks), music chain
   (noisereduce, n_fft 4096)
+- `tone.py` – tone matching for the voice: third-octave bands of the linked AI voice (cached as
+  `voice_bands.npy`), 6 s sliding shape vs. a reference (driest 30 % of windows, or `tone_ref.json` set by
+  right-click), clipped ±12 dB × `tone_match`; applied as STFT EQ to the speech chain and the MIX voice part
 - `pipeline.py` – `Project`: cache dir per source (`~/Library/Caches/Klangrestaurator/<stem>-<hash>`),
   `prepare()`, `render()`, `export()`, `write_preview()`
 - `cli.py` – CLI; `gui/app.py` main window; `gui/timeline.py` level + segment view (click/drag/right-click/zoom);
@@ -79,6 +82,9 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
   (reclassify) or delete the cache folder; `enh.npy` only depends on the source.
 - Manually corrected segments have `manual=True`; reclassify overwrites them (by design for now).
 - Long jobs must check `cancel()` between blocks and raise `Cancelled`.
+- Tests run with the cache redirected to a temp dir (autouse fixture in `conftest.py`).
+- STFT helpers take (samples, channels); a 1-D signal must be reshaped first, or gains broadcast into
+  a (bins × bins × frames) array (this once ate 60 GB of RAM in `tone.apply_eq`).
 - QtMultimedia is created lazily (it can segfault in headless Linux containers).
 - The project sits in iCloud-synced ~/Documents. iCloud sets the macOS `hidden` flag on files it syncs, and Python
   then skips `.pth` files while Qt skips plugins. So the venv lives in `.venv.nosync/` (iCloud ignores `*.nosync`)
@@ -90,7 +96,7 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 ## Ideas / roadmap
 
 - Third class "applause/crowd" (currently treated as music = gentle NR) with its own handling
-- Per-section settings (e.g. stronger dereverb + matching EQ where the speaker sits close to the PA mic)
+- Speech leveling between sections (close vs. normal speaking position)
 - Loudness normalisation (EBU R128) and gentle speech leveling as export option
 - Batch window (several files, one preset), drag-out of finished files
 - Code signing/notarisation for the .app; bundle the deep-filter binary instead of downloading

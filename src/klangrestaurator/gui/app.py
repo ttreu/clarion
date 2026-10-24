@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         self.timeline = Timeline()
         self.timeline.seek.connect(self._on_seek)
         self.timeline.relabel.connect(self._on_relabel)
+        self.timeline.tone_ref.connect(self._on_tone_ref)
         self.timeline.selection_changed.connect(self._on_selection)
         v.addWidget(self.timeline, 1)
         hint = QLabel("Klicken = Position · Ziehen = Bereich wählen · Rechtsklick = Sprache/Musik korrigieren · "
@@ -107,6 +108,11 @@ class MainWindow(QMainWindow):
         self.chk_wpe = QCheckBox("Zusätzliche Hallreduktion (langsamer, trockener)")
         self.chk_wpe.toggled.connect(self._mark_stale)
         f.addRow("", self.chk_wpe)
+        self.sl_tone, self.lbl_tone = self._slider(0, 100, "%")
+        self.sl_tone.setToolTip("Gleicht die Klangfarbe der Stimme an, wenn sich die Sprechposition ändert "
+                                "(z. B. nah am Mikrofon der Beschallung: dröhnend und scharf). Ziel sind die "
+                                "trockensten Stellen der Datei oder eine per Rechtsklick gewählte Klangreferenz.")
+        f.addRow("Sprache: Klang angleichen", self._pair(self.sl_tone, self.lbl_tone))
         self.sl_music, self.lbl_music = self._slider(0, 100, "%")
         f.addRow("Musik: Rauschreduktion", self._pair(self.sl_music, self.lbl_music))
         self.sl_mix, self.lbl_mix = self._slider(0, 100, "%")
@@ -256,6 +262,7 @@ class MainWindow(QMainWindow):
         base = PRESETS.get(self.cmb_preset.currentText(), Settings())
         return base.with_(speech_reduction_db=float(self.sl_speech.value()),
                           speech_dereverb=self.chk_wpe.isChecked(),
+                          tone_match=self.sl_tone.value() / 100,
                           music_reduction=self.sl_music.value() / 100,
                           mix_music=self.sl_mix.value() / 100)
 
@@ -267,6 +274,7 @@ class MainWindow(QMainWindow):
         self.sl_music.setValue(int(round(st.music_reduction * 100)))
         self.sl_mix.setValue(int(round(st.mix_music * 100)))
         self.chk_wpe.setChecked(st.speech_dereverb)
+        self.sl_tone.setValue(int(round(st.tone_match * 100)))
         self.prefs.setValue("preset", name)
         self._mark_stale()
 
@@ -375,6 +383,7 @@ class MainWindow(QMainWindow):
     def _analysed(self, _):
         p = self.project
         self.timeline.set_data(p.levels, p.segments, p.duration)
+        self.timeline.ref = p.tone_ref
         n_music = sum(1 for s in p.segments if s.kind == MUSIC)
         t_music = sum(s.duration for s in p.segments if s.kind == MUSIC)
         n_mix = sum(1 for s in p.segments if s.kind == MIX)
@@ -386,6 +395,16 @@ class MainWindow(QMainWindow):
         self._set_busy(False)
 
     # ------------------------------------------------------------------ segments
+    def _on_tone_ref(self, a: float, b: float):
+        if not self.project:
+            return
+        rng = None if a < 0 else (a, b)
+        self.project.set_tone_ref(rng)
+        self.timeline.ref = rng
+        self.timeline.update()
+        self.statusBar().showMessage("Klangreferenz: " + (f"{fmt(a)} – {fmt(b)}" if rng else "automatisch"))
+        self._mark_stale()
+
     def _on_relabel(self, a: float, b: float, kind: str):
         if not self.project:
             return

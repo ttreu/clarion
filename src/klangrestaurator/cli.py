@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--music", type=float, help="Rauschreduktion Musik 0..1 (überschreibt Preset)")
     ap.add_argument("--mix-music", type=float,
                     help="„Sprache + Musik“: Anteil des entrauschten Originals 0..1 (Standard 0.5)")
+    ap.add_argument("--tone", type=float, help="Klang der Stimme angleichen 0..1 (Standard 0.7, 0 = aus)")
     ap.add_argument("--dereverb", action=argparse.BooleanOptionalAction, help="Zusätzliche Hallreduktion (WPE)")
     ap.add_argument("--keep-rate", action="store_true", help="Original-Samplerate statt 48 kHz ausgeben")
     ap.add_argument("--segments", action="store_true",
@@ -41,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
         st = st.with_(music_reduction=a.music)
     if a.mix_music is not None:
         st = st.with_(mix_music=a.mix_music)
+    if a.tone is not None:
+        st = st.with_(tone_match=a.tone)
     if a.dereverb is not None:
         st = st.with_(speech_dereverb=a.dereverb)
 

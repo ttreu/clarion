@@ -35,6 +35,13 @@ class Settings:
     min_switch_s: float = 6.0
     """Automatic sections shorter than this are merged into a neighbour (no rapid switching)."""
 
+    # --- tone matching ("Klang angleichen") ---------------------------------
+    tone_match: float = 0.7
+    """0..1: how far the voice's timbre is pulled towards the reference (driest parts or a chosen range).
+    Evens out changes of microphone position, e.g. close to the PA (boomy, harsh) vs. normal."""
+    tone_max_db: float = 12.0
+    """Largest EQ correction per band before ``tone_match`` is applied."""
+
     # --- music chain --------------------------------------------------------
     music_reduction: float = 0.70
     """0..1 – proportion of stationary noise removed in music passages (0.7 ≈ -10 dB)."""

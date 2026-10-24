@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import analysis, audio_io, chains, dfn
+from . import analysis, audio_io, chains, dfn, tone
 from .analysis import MIX, SPEECH, Segment
 from .settings import SR, Settings
 
@@ -51,6 +51,10 @@ class Project:
         self.levels: np.ndarray | None = None
         self.segments: list[Segment] = []
         self.meta: dict = {}
+        self.voice_bands: np.ndarray | None = None   # third-octave bands of the AI voice (tone matching)
+        self.enh_levels: np.ndarray | None = None
+        self._curve_key = None
+        self._curve: np.ndarray | None = None
 
     # ------------------------------------------------------------------ analysis
     @property
@@ -104,6 +108,13 @@ class Project:
         if not f_elev.exists():
             np.save(f_elev, analysis.frame_levels(self.enh))
         self.levels = np.load(f_lev)
+        self.enh_levels = np.load(f_elev)
+
+        f_vb = self.dir / "voice_bands.npy"
+        if not f_vb.exists():
+            p("Klang analysieren", 0.5)
+            np.save(f_vb, self._compute_voice_bands(cancel))
+        self.voice_bands = np.load(f_vb)
 
         if reclassify or not f_seg.exists():
             p("Sprache / Musik erkennen", 0.5)
@@ -112,6 +123,51 @@ class Project:
         else:
             self.segments = analysis.load_segments(f_seg)
         p("Analyse fertig", 1)
+
+    def _compute_voice_bands(self, cancel: Cancel = None) -> np.ndarray:
+        """Band powers of the stereo-linked AI voice, blockwise over the whole file."""
+        n, blk, pad = len(self.orig), BLOCK_S * SR, tone.N_FFT
+        parts = []
+        for s in range(0, n, blk):
+            self._check(cancel)
+            e = min(n, s + blk)
+            a, b = (max(0, s - pad) // tone.HOP) * tone.HOP, min(n, e + pad)   # a on the frame grid
+            v = chains.stereo_link(np.asarray(self.orig[a:b]), np.asarray(self.enh[a:b]))
+            bp = tone.band_powers(v)                       # local frame j is global frame a/HOP + j
+            f0, f1 = -(-s // tone.HOP), (e - 1) // tone.HOP + 1
+            parts.append(bp[f0 - a // tone.HOP:f1 - a // tone.HOP])
+        return np.concatenate(parts).astype(np.float32)
+
+    # ------------------------------------------------------------------ tone matching
+    @property
+    def tone_ref(self) -> tuple[float, float] | None:
+        """Range (s) whose voice timbre is the target of tone matching; None = automatic (driest parts)."""
+        f = self.dir / "tone_ref.json"
+        if f.exists():
+            a, b = json.loads(f.read_text())
+            return float(a), float(b)
+        return None
+
+    def set_tone_ref(self, rng: tuple[float, float] | None) -> None:
+        f = self.dir / "tone_ref.json"
+        if rng is None:
+            f.unlink(missing_ok=True)
+        else:
+            f.write_text(json.dumps([float(rng[0]), float(rng[1])]))
+        self._curve_key = None
+
+    def tone_curve(self, settings: Settings) -> np.ndarray | None:
+        """EQ curve (dB, frames × bands) for the voice, or None when tone matching is off."""
+        if settings.tone_match <= 0 or self.voice_bands is None:
+            return None
+        key = (settings.tone_match, settings.tone_max_db, self.tone_ref)
+        if key != self._curve_key:
+            fr = np.arange(len(self.voice_bands)) * tone.HOP / SR        # frame times (s)
+            dry = np.interp(fr * 4, np.arange(len(self.levels)) + 0.5, self.enh_levels - self.levels)
+            self._curve = tone.correction_curve(self.voice_bands, dry, settings.tone_match,
+                                                settings.tone_max_db, ref=self.tone_ref)
+            self._curve_key = key
+        return self._curve
 
     def save_segments(self) -> None:
         analysis.save_segments(self.segments, self.dir / "segments.json")
@@ -164,6 +220,7 @@ class Project:
         runs = [r for r in runs if r[-1].end * SR > A and r[0].start * SR < B]
         steps = n_blocks + len(runs)
         step = 0
+        curve = self.tone_curve(settings)
         for s in range(A, B, blk):
             self._check(cancel)
             e = min(B, s + blk)
@@ -175,7 +232,10 @@ class Project:
             if m.max() > 1e-3:
                 sp = chains.speech_chain(o, np.asarray(self.enh[ps:pe]), settings.speech_reduction_db,
                                          settings.speech_highpass_hz, settings.speech_dereverb,
-                                         settings.speech_stereo_link)[s - ps:e - ps]
+                                         settings.speech_stereo_link)
+                if curve is not None:
+                    sp = tone.apply_eq(sp, curve, ps)
+                sp = sp[s - ps:e - ps]
                 out[s - A:e - A] = sp * m + mu * (1 - m)
             else:
                 out[s - A:e - A] = mu
@@ -202,7 +262,10 @@ class Project:
             out[a - A:b - A] += (1 - ms) * (y - x)
             if any(sg.kind == MIX for sg in run):
                 v = chains.highpass(chains.stereo_link(o, np.asarray(self.enh[pa:pb])),
-                                    settings.speech_highpass_hz)[a - pa:b - pa]
+                                    settings.speech_highpass_hz)
+                if curve is not None:
+                    v = tone.apply_eq(v, curve, pa)
+                v = v[a - pa:b - pa]
                 # the music share gets a stronger NR: noise is stationary, music isn't, so this costs
                 # little music (02.WAV: noise −13 dB instead of −9 dB, cello −2.4 dB instead of −1.8 dB)
                 ym = chains.music_chain(o, noise, settings.mix_reduction, settings.music_highpass_hz)

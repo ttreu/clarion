@@ -15,6 +15,7 @@ KIND_COL = {SPEECH: COL_SPEECH, MUSIC: COL_MUSIC, MIX: COL_MIX}
 COL_WAVE = QColor(60, 60, 70)
 COL_SEL = QColor(40, 170, 120, 70)
 COL_HEAD = QColor(220, 40, 60)
+COL_REF = QColor(30, 160, 90)
 
 
 def fmt(t: float) -> str:
@@ -25,6 +26,7 @@ class Timeline(QWidget):
     seek = Signal(float)                      # user clicked a position (s)
     selection_changed = Signal(float, float)  # (start, end) s, end<=start means none
     relabel = Signal(float, float, str)       # mark range as speech/music/mix
+    tone_ref = Signal(float, float)           # use range as tone reference; (-1, -1) = automatic
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -39,6 +41,7 @@ class Timeline(QWidget):
         self.sel = (0.0, 0.0)
         self._drag_from: float | None = None
         self._hover: float | None = None
+        self.ref: tuple[float, float] | None = None  # tone reference range (shown as a green bar)
 
     # ---------------------------------------------------------------- data
     def set_data(self, levels: np.ndarray, segments: list[Segment], duration: float) -> None:
@@ -117,6 +120,12 @@ class Timeline(QWidget):
         s0, s1 = self.sel
         if s1 > s0:
             p.fillRect(QRectF(self._x(s0), lane, self._x(s1) - self._x(s0), h - lane), COL_SEL)
+        if self.ref:  # tone reference
+            r0, r1 = self._x(self.ref[0]), self._x(self.ref[1])
+            p.fillRect(QRectF(r0, h - 24, max(2.0, r1 - r0), 4), COL_REF)
+            if r1 - r0 > 90:
+                p.setPen(COL_REF)
+                p.drawText(QRectF(r0 + 2, h - 40, r1 - r0, 14), Qt.AlignLeft, "Klangreferenz")
         p.setPen(QPen(COL_HEAD, 2))
         xh = self._x(self.head)
         p.drawLine(QPointF(xh, 0), QPointF(xh, h))
@@ -190,6 +199,14 @@ class Timeline(QWidget):
                             ("Als Sprache + Musik behandeln", MIX)):
             act = QAction(f"{label}  ({fmt(s0)} – {fmt(s1)})", m)
             act.triggered.connect(lambda _=False, k=kind: self.relabel.emit(s0, s1, k))
+            m.addAction(act)
+        m.addSeparator()
+        act = QAction(f"Als Klangreferenz für die Stimme verwenden  ({fmt(s0)} – {fmt(s1)})", m)
+        act.triggered.connect(lambda: self.tone_ref.emit(s0, s1))
+        m.addAction(act)
+        if self.ref:
+            act = QAction("Klangreferenz: automatisch (trockenste Stellen)", m)
+            act.triggered.connect(lambda: self.tone_ref.emit(-1.0, -1.0))
             m.addAction(act)
         m.addSeparator()
         zoom = QAction("Ganze Datei anzeigen", m)
