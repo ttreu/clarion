@@ -18,8 +18,8 @@ def app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
-def _mouse(w, kind, x, buttons):
-    pos = QtCore.QPointF(x, 30)
+def _mouse(w, kind, x, buttons, y=30):
+    pos = QtCore.QPointF(x, y)
     btn = QtCore.Qt.LeftButton if kind != QtCore.QEvent.MouseMove else QtCore.Qt.NoButton
     ev = QtGui.QMouseEvent(kind, pos, w.mapToGlobal(pos), btn, buttons, QtCore.Qt.NoModifier)
     QtWidgets.QApplication.sendEvent(w, ev)
@@ -102,3 +102,76 @@ def test_previews_are_remembered_and_reused(app, monkeypatch, tmp_path, reading_
     finally:
         w.chk_norm.setChecked(was)
         w.close()
+
+
+def test_original_plays_before_preview_and_trim_keys(app, monkeypatch, reading_file, no_dfn):
+    import time
+
+    monkeypatch.setenv("KLANGRESTAURATOR_NO_AUDIO", "1")
+    from klangrestaurator.gui.app import MainWindow
+    w = MainWindow()
+
+    def pump(cond, limit=30):
+        t = time.time()
+        while time.time() - t < limit and not cond():
+            app.processEvents()
+            time.sleep(0.01)
+
+    try:
+        path, _ = reading_file
+        w.load(path)
+        # right after loading – analysis still running – the original can already be played
+        assert w.files_ab == (path, None) and w._orig_only
+        assert w.btn_play.isEnabled() and not w.rb_b.isEnabled() and w.rb_a.isChecked()
+        pump(lambda: w.project.analysed and w._job is None)
+        assert w.btn_play.isEnabled() and w._preview_range == (0.0, w.project.duration)
+        w._mark_stale()                                # no automatic whole-file preview in original mode
+        assert not w._auto_timer.isActive()
+        w.timeline.head = 4.0
+        w._trim_at_head(start=True)
+        w.timeline.head = 20.0
+        w._trim_at_head(start=False)
+        assert w.project.trim == (4.0, 20.0) and w.timeline.trim == (4.0, 20.0)
+        w.timeline.grab()                              # paints the greyed-out parts without errors
+        w._on_trim(-1.0, -1.0)
+        assert w.project.trim is None
+        w.timeline.sel = (2.0, 8.0)
+        w.make_preview()
+        pump(lambda: w._job is None and w.files_ab is not None and w.files_ab[1] is not None)
+        assert not w._orig_only and w.rb_b.isEnabled() and w.rb_b.isChecked()
+    finally:
+        w.close()
+
+
+def test_drag_in_and_out_markers(app):
+    w = Timeline()
+    w.resize(1000, 160)
+    segs = [Segment(0, 30, SPEECH), Segment(30, 60, MIX), Segment(60, 100, SPEECH)]
+    w.set_data(np.full(400, -30.0), segs, 100.0)
+    got = []
+    w.trim_changed.connect(lambda a, b: got.append((round(a, 1), round(b, 1))))
+    L, none = QtCore.Qt.LeftButton, QtCore.Qt.NoButton
+    # untrimmed: In sits at the left edge, Out at the right edge
+    _mouse(w, QtCore.QEvent.MouseButtonPress, 2, L, y=100)
+    _mouse(w, QtCore.QEvent.MouseMove, 120, L, y=100)
+    _mouse(w, QtCore.QEvent.MouseButtonRelease, 120, none, y=100)
+    assert got[-1] == (12.0, 100.0)
+    w.trim = (12.0, 100.0)
+    _mouse(w, QtCore.QEvent.MouseButtonPress, 998, L, y=100)
+    _mouse(w, QtCore.QEvent.MouseMove, 800, L, y=100)
+    _mouse(w, QtCore.QEvent.MouseButtonRelease, 800, none, y=100)
+    assert got[-1] == (12.0, 80.0)
+    # Out cannot be pulled in front of In
+    w.trim = (12.0, 80.0)
+    _mouse(w, QtCore.QEvent.MouseButtonPress, 800, L, y=100)
+    _mouse(w, QtCore.QEvent.MouseMove, 50, L, y=100)
+    _mouse(w, QtCore.QEvent.MouseButtonRelease, 50, none, y=100)
+    assert got[-1] == (12.0, 12.5)
+    # in the top band a section boundary at the same spot still wins
+    w.trim = (30.0, 80.0)
+    moved = []
+    w.boundary_moved.connect(lambda a, b: moved.append(b))
+    _mouse(w, QtCore.QEvent.MouseButtonPress, 300, L, y=8)
+    _mouse(w, QtCore.QEvent.MouseMove, 350, L, y=8)
+    _mouse(w, QtCore.QEvent.MouseButtonRelease, 350, none, y=8)
+    assert moved and abs(moved[-1] - 35) < 0.2

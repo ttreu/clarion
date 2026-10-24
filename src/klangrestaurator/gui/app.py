@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__
+from .. import __version__, audio_io
 from ..analysis import MIX, MUSIC
 from ..pipeline import Project, default_output_name
 from ..settings import PRESETS, SR, Settings
@@ -76,6 +76,9 @@ class MainWindow(QMainWindow):
         # --- players for A/B -------------------------------------------------
         self.player: QMediaPlayer | None = None  # created lazily (audio init can be slow)
         self.files_ab: tuple[Path, Path] | None = None
+        # before the first preview the transport plays the original file itself (files_ab = (source,
+        # None), range = whole file): useful for finding cut points and listening before computing
+        self._orig_only = False
 
         # --- widgets -----------------------------------------------------------
         root = QWidget()
@@ -96,10 +99,12 @@ class MainWindow(QMainWindow):
         self.timeline.relabel.connect(self._on_relabel)
         self.timeline.tone_ref.connect(self._on_tone_ref)
         self.timeline.boundary_moved.connect(self._on_boundary)
+        self.timeline.trim_changed.connect(self._on_trim)
         self.timeline.selection_changed.connect(self._on_selection)
         v.addWidget(self.timeline, 1)
         hint = QLabel("Klicken = Position · Ziehen = Bereich wählen · Grenze ziehen = Abschnitt anpassen · "
-                      "Rechtsklick = Sprache/Musik korrigieren · Mausrad = Zoom")
+                      "In/Out-Marker ziehen oder I / O = Anfang / Ende · Rechtsklick = Korrigieren / Zuschneiden · "
+                      "Mausrad = Zoom")
         hint.setStyleSheet("color: gray; font-size: 11px;")
         v.addWidget(hint)
 
@@ -245,10 +250,13 @@ class MainWindow(QMainWindow):
                               ("Zurück", Qt.Key_Left, lambda: self.skip(-SKIP_MS)),
                               ("Vor", Qt.Key_Right, lambda: self.skip(SKIP_MS)),
                               ("Zum Anfang", Qt.Key_Home, self.to_start),
-                              ("Schleife", Qt.Key_L, self.btn_loop.toggle)):
+                              ("Schleife", Qt.Key_L, self.btn_loop.toggle),
+                              ("Anfang hier setzen", Qt.Key_I, lambda: self._trim_at_head(start=True)),
+                              ("Ende hier setzen", Qt.Key_O, lambda: self._trim_at_head(start=False))):
             self.addAction(QAction(name, self, shortcut=QKeySequence(key), triggered=fn))
         ab_toggle = QAction("A/B", self, shortcut=QKeySequence(Qt.Key_Tab),
-                            triggered=lambda: (self.rb_a if self.rb_b.isChecked() else self.rb_b).setChecked(True))
+                            triggered=lambda: self.rb_b.isEnabled()
+                            and (self.rb_a if self.rb_b.isChecked() else self.rb_b).setChecked(True))
         self.addAction(ab_toggle)
         hm = self.menuBar().addMenu("Hilfe")
         hm.addAction(QAction("Über Klangrestaurator", self, triggered=self.about))
@@ -362,13 +370,13 @@ class MainWindow(QMainWindow):
 
     def _mark_stale(self, *_):
         self._preview_stale = True
-        if self._preview_range:
+        if self._preview_range and not self._orig_only:
             self.lbl_prev.setText("Einstellungen geändert – Vorschau wird neu berechnet…")
             self._auto_timer.start()  # debounce: restarts while a slider is being dragged
 
     def _auto_refresh(self):
         """Recompute the preview (new settings and/or new selection), keeping playback going."""
-        if not (self._preview_stale and self._preview_range and self.project):
+        if not (self._preview_stale and self._preview_range and self.project) or self._orig_only:
             return
         if self._job:
             self._refresh_pending = True  # rerun when the current job has ended
@@ -384,8 +392,9 @@ class MainWindow(QMainWindow):
             wdg.setEnabled(has and not busy)
         self.btn_open.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
-        for b in self.transport:  # previews can be listened to while the next one is computed
-            b.setEnabled(self.files_ab is not None and (not busy or self._job_is_preview))
+        for b in self.transport:  # previews (and the original) can be listened to during jobs
+            b.setEnabled(self.files_ab is not None and (not busy or self._job_is_preview or self._orig_only))
+        self.rb_b.setEnabled(not self._orig_only)
 
     def _progress(self, stage: str, v: float):
         self.progress.setValue(int(v * 1000))
@@ -451,6 +460,7 @@ class MainWindow(QMainWindow):
         self.prefs.setValue("last_dir", str(path.parent))
         self.project = Project(path)
         self.lbl_file.setText(str(path))
+        self._start_original(path)
         st = self.settings()
         proj = self.project
         self._run(lambda progress, cancel: proj.prepare(st, progress=progress, cancel=cancel),
@@ -467,6 +477,7 @@ class MainWindow(QMainWindow):
         p = self.project
         self.timeline.set_data(p.levels, p.segments, p.duration)
         self.timeline.ref = p.tone_ref
+        self.timeline.trim = p.trim
         n_music = sum(1 for s in p.segments if s.kind == MUSIC)
         t_music = sum(s.duration for s in p.segments if s.kind == MUSIC)
         n_mix = sum(1 for s in p.segments if s.kind == MIX)
@@ -478,6 +489,29 @@ class MainWindow(QMainWindow):
         self._set_busy(False)
 
     # ------------------------------------------------------------------ segments
+    def _trim_at_head(self, start: bool):
+        if not self.project or not self.project.analysed:
+            return
+        t = self.timeline.head
+        a, b = self.project.trim or (0.0, self.project.duration)
+        self._on_trim(*((t, b) if start else (a, t)))
+
+    def _on_trim(self, a: float, b: float):
+        if not self.project:
+            return
+        if a >= 0 and a <= 0.01 and b >= self.project.duration - 0.01:
+            a = b = -1.0                                  # markers back at the edges: no trim
+        try:
+            self.project.set_trim(None if a < 0 else (a, b))
+        except ValueError as err:
+            self.statusBar().showMessage(f"Zuschnitt nicht möglich: {err}")
+            return
+        self.timeline.trim = self.project.trim
+        self.timeline.update()
+        tr = self.project.trim
+        self.statusBar().showMessage(
+            f"Export von {fmt(tr[0])} bis {fmt(tr[1])} ({fmt(tr[1] - tr[0])} min)" if tr else "Zuschnitt aufgehoben")
+
     def _on_boundary(self, old: float, new: float):
         if not self.project:
             return
@@ -503,12 +537,26 @@ class MainWindow(QMainWindow):
         self.timeline.set_segments(self.project.segments)
         self._mark_stale()
 
+    def _start_original(self, path: Path):
+        """Make the transport play the original file (until a preview exists)."""
+        try:
+            dur = float(audio_io.probe(path)[2])
+        except Exception:  # noqa: BLE001 – unreadable here: the analysis will report it
+            return
+        self._orig_only = True
+        self.files_ab = (path, None)
+        self._preview_range = (0.0, dur)
+        self._preview_stale = False
+        self.rb_a.setChecked(True)
+        self.lbl_prev.setText("Original · Leertaste = Play · für B (restauriert) erst Vorschau berechnen")
+        self._load_current(0)
+
     def _on_selection(self, a: float, b: float):
         if b > a:
             self.statusBar().showMessage(f"Auswahl {fmt(a)} – {fmt(b)} ({b - a:.1f} s)")
             self._loop_hint()
         # once a preview exists, a new selection (>= 1 s) becomes the new preview range
-        if b - a >= 1 and self._preview_range and self.project:
+        if b - a >= 1 and self._preview_range and self.project and not self._orig_only:
             rng = (a, min(b, a + 120, self.project.duration))
             if rng != self._preview_range:
                 self._next_range = rng
@@ -562,6 +610,12 @@ class MainWindow(QMainWindow):
                 # new range: keep the same moment in the recording if it is inside, else start at a
                 t = self._preview_range[0] + pos / 1000
                 pos = int((t - a) * 1000) if a <= t < b else 0
+            if self._orig_only:            # first preview: from now on A/B of the preview range
+                self._orig_only = False
+                pos, playing = 0, playing or not resume
+                self.rb_a.blockSignals(True)
+                self.rb_b.setChecked(True)
+                self.rb_a.blockSignals(False)
             self.files_ab = files
             self._preview_range = (a, b)
             self._preview_stale = False
@@ -624,7 +678,7 @@ class MainWindow(QMainWindow):
         """Load the A or B file; seek and (optionally) play once it is loaded, so nothing is heard early."""
         if not self.files_ab or not self._ensure_player():
             return
-        f = self.files_ab[0] if self.rb_a.isChecked() else self.files_ab[1]
+        f = self.files_ab[0] if (self.rb_a.isChecked() or self.files_ab[1] is None) else self.files_ab[1]
         self._pending_load = (pos_ms, play)
         # Status signals emitted inside setSource() are unreliable: it reports LoadedMedia for the old
         # file first, and when called during a load it reports LoadedMedia for the new one right away.
@@ -651,7 +705,7 @@ class MainWindow(QMainWindow):
             self.player.play()
 
     def _switch_ab(self, *_):
-        if not self.files_ab or not self.player:
+        if not self.files_ab or not self.player or self.files_ab[1] is None:
             return
         playing = self.player.playbackState() == QMediaPlayer.PlayingState
         self._load_current(self.player.position(), play=playing)

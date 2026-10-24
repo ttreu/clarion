@@ -140,6 +140,28 @@ class Project:
             parts.append(bp[f0 - a // tone.HOP:f1 - a // tone.HOP])
         return np.concatenate(parts).astype(np.float32)
 
+    # ------------------------------------------------------------------ trimming
+    @property
+    def trim(self) -> tuple[float, float] | None:
+        """Exported range (s) set by the user (start/end cut), or None for the whole file."""
+        f = self.dir / "trim.json"
+        if f.exists():
+            a, b = json.loads(f.read_text())
+            return float(a), float(b)
+        return None
+
+    def set_trim(self, rng: tuple[float, float] | None) -> None:
+        f = self.dir / "trim.json"
+        if rng is None:
+            f.unlink(missing_ok=True)
+            return
+        a, b = max(0.0, float(rng[0])), float(rng[1])
+        if self.duration:
+            b = min(b, self.duration)
+        if b - a < 0.5:
+            raise ValueError("Der Bereich muss mindestens 0,5 s lang sein")
+        f.write_text(json.dumps([a, b]))
+
     # ------------------------------------------------------------------ tone matching
     @property
     def tone_ref(self) -> tuple[float, float] | None:
@@ -358,7 +380,11 @@ class Project:
                cancel: Cancel = None) -> Path:
         p = progress or (lambda *_: None)
         settings = settings.effective()
+        if start_s == 0.0 and end_s is None and self.trim:   # the user's cut (Anfang/Ende)
+            start_s, end_s = self.trim
         y = self.render(settings, start_s, end_s, progress=lambda s, v: p(s, 0.85 * v), cancel=cancel)
+        if start_s > 0 or (end_s is not None and end_s < self.duration):
+            _fade_edges(y, int(FADE_S * SR))           # no click where the recording was cut
         dest = Path(dest)
         if settings.loudness_target is None:   # peak normalisation only (as before)
             g, lim = self.output_gain(y, settings), None
@@ -407,6 +433,19 @@ class Project:
         audio_io.write_wav(self.orig, SR, f_o, start=a, stop=b, gain=g_o, subtype="PCM_16", limiter=lim_o)
         audio_io.write_wav(y, SR, f_r, gain=g, subtype="PCM_16", limiter=lim_r)
         return f_o, f_r
+
+
+FADE_S = 0.02
+
+
+def _fade_edges(y: np.ndarray, n: int) -> None:
+    """Short raised-cosine fade in/out, in place (works on memmaps)."""
+    n = min(n, len(y) // 2)
+    if n < 2:
+        return
+    ramp = (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, n))).astype(np.float32)[:, None]
+    y[:n] *= ramp
+    y[len(y) - n:] *= ramp[::-1]
 
 
 def default_output_name(source: Path, preset_name: str = "") -> Path:

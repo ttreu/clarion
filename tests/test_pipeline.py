@@ -128,3 +128,22 @@ def test_normalize_switch_off_restores_old_behaviour(reading_file, no_dfn, tmp_p
     y, _ = sf.read(proj.export(on.with_(loudness_target=-14.0), tmp_path / "on.wav"))
     assert abs(dynamics.loudness(y) - (-14.0)) < 1.0
     assert np.abs(y).max() <= 10 ** (-1 / 20) + 1e-3
+
+
+def test_trim_limits_export_with_soft_edges(reading_file, no_dfn, tmp_path):
+    path, _ = reading_file
+    proj = Project(path)
+    proj.prepare()
+    st = PRESETS["Sanft"].with_(normalize=False)     # fast (no WPE)
+    proj.set_trim((5.0, 12.5))
+    assert proj.trim == (5.0, 12.5)
+    y, _ = sf.read(proj.export(st, tmp_path / "cut.wav"))
+    assert len(y) == int(12.5 * SR) - int(5.0 * SR)
+    assert np.abs(y[:5]).max() < 0.05 * np.abs(y).max()      # fades in, no hard start
+    assert np.abs(y[-5:]).max() < 0.05 * np.abs(y).max()
+    with pytest.raises(ValueError):
+        proj.set_trim((3.0, 3.2))                               # too short
+    proj.set_trim(None)
+    assert proj.trim is None
+    y, _ = sf.read(proj.export(st, tmp_path / "full.wav"))
+    assert len(y) == 30 * SR

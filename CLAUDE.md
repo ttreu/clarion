@@ -96,6 +96,11 @@ binary loads its whole input into memory, hence the chunking in `dfn.py`.
 
 - Internal rate is always 48 kHz (DeepFilterNet requirement). Don't add resampling inside chains.
 - Segment kinds: `speech`, `music`, `mix` (= "Sprache + Musik"). Labels in `analysis.KIND_LABEL`.
+- Trim (Anfang/Ende): `Project.trim` (trim.json), set by dragging the In/Out markers (below the section band;
+  in the band, boundaries win), right-click or I/O at the playhead; outside the range the waveform is grey; export uses it
+  when no explicit range is given and fades 20 ms at cut edges. Analysis still covers the whole file.
+- Before the first preview the transport plays the original source file (`_orig_only`, files_ab = (source,
+  None), range = whole file); B is disabled and no automatic preview runs in that mode.
 - Cache invalidation is by path+size+mtime. Changing the analysis algorithm → use "Erkennung neu berechnen"
   (reclassify) or delete the cache folder; `enh.npy` only depends on the source.
 - Manually corrected segments have `manual=True`; reclassify overwrites them (by design for now).
