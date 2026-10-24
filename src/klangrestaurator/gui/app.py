@@ -264,6 +264,8 @@ class MainWindow(QMainWindow):
 
     def _clear_job(self, *_):
         self._job = None
+        self.progress.reset()
+        self.progress.setFormat("")
 
     def cancel_job(self):
         if self._job:
@@ -345,7 +347,7 @@ class MainWindow(QMainWindow):
         if b - a < 1:
             a = self.timeline.head
             b = a + PREVIEW_S
-        b = min(b, a + 120)  # keep previews short
+        b = min(b, a + 120, self.project.duration)  # keep previews short, stay inside the file
         st, proj = self.settings(), self.project
         self._stop()
 
@@ -361,6 +363,7 @@ class MainWindow(QMainWindow):
             self._preview_stale = False
             self.lbl_prev.setText(f"Vorschau {fmt(a)} – {fmt(b)} · Leertaste = Play, Tab = A/B")
             self._set_busy(False)
+            self.statusBar().showMessage(f"Vorschau bereit ({b - a:.0f} s)")
             self._load_current(0)
             if self.player:
                 self.player.play()
